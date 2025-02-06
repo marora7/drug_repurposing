@@ -1,0 +1,13 @@
+# config/config.yaml
+pubtator:
+  base_url: "https://ftp.ncbi.nlm.nih.gov/pub/lu/PubTator3/"
+  files:
+    - "disease2pubtator3.gz"
+    - "chemical2pubtator3.gz"
+    - "gene2pubtator3.gz"
+    - "relation2pubtator3.gz"
+  temp_dir: "./data/raw/pubtator/temp"
+database:
+  pubtator_db: "./data/processed/pubtator.db"
+download:
+  chunk_size: 8192

@@ -1,4 +1,3 @@
-# config/config.yaml
 pubtator:
   base_url: "https://ftp.ncbi.nlm.nih.gov/pub/lu/PubTator3/"
   files:
@@ -11,3 +10,12 @@ database:
   pubtator_db: "./data/processed/pubtator.db"
 download:
   chunk_size: 8192
+
+ncbi:
+  gene_info_file: "Homo_sapiens.gene_info.gz"
+  gene_info_url: "https://ftp.ncbi.nih.gov/gene/DATA/GENE_INFO/Mammalia/"
+  table_name: "homo_sapiens_genes"
+  temp_dir: "./data/raw/ncbi/temp"
+
+database:
+  ncbi_db: "./data/processed/ncbi.db"

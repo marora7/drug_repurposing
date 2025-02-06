@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Extract data from Pubtator and load it into an SQLite database.
 

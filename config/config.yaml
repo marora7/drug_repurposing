@@ -6,8 +6,10 @@ pubtator:
     - "gene2pubtator3.gz"
     - "relation2pubtator3.gz"
   temp_dir: "./data/raw/pubtator/temp"
+
 database:
   pubtator_db: "./data/processed/pubtator.db"
+  
 download:
   chunk_size: 8192
 
@@ -19,3 +21,6 @@ ncbi:
 
 database:
   ncbi_db: "./data/processed/ncbi.db"
+
+nodes:
+  table_name: "nodes"

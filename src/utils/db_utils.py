@@ -108,3 +108,43 @@ def read_first_rows(db_path, table_name, num_rows=10):
     except sqlite3.Error as e:
         logging.error(f"Failed to read rows from table '{table_name}': {e}")
         raise
+
+def drop_table_if_exists(connection, table_name):
+    """
+    Checks if a table exists in the database and drops it if found.
+    
+    Args:
+        connection (sqlite3.Connection): Active database connection.
+        table_name (str): Name of the table to drop.
+    """
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?;", (table_name,))
+        if cursor.fetchone():
+            logging.info(f"Table '{table_name}' exists. Dropping it.")
+            cursor.execute(f"DROP TABLE {table_name}")
+            connection.commit()
+            logging.info(f"Table '{table_name}' dropped.")
+        else:
+            logging.info(f"Table '{table_name}' does not exist. No drop needed.")
+    except Exception as e:
+        logging.error(f"Error dropping table '{table_name}': {e}")
+        raise
+
+def create_table(connection, create_query):
+    """
+    Creates a table using the provided SQL create statement.
+    
+    Args:
+        connection (sqlite3.Connection): Active database connection.
+        create_query (str): SQL query that creates the table.
+    """
+    try:
+        cursor = connection.cursor()
+        logging.info("Creating table using provided query.")
+        cursor.execute(create_query)
+        connection.commit()
+        logging.info("Table created successfully.")
+    except Exception as e:
+        logging.error(f"Error creating table: {e}")
+        raise

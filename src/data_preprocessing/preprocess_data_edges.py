@@ -3,7 +3,7 @@
 Data cleaning and preprocessing for edges (Knowledge Graph).
 
 This script:
-  - Drops the existing 'edges' table (if any) and then creates a new one using generalized utility functions.
+  - Drops the existing 'edges' table (if any) and then creates a new one.
   - Inserts data from the 'relations' table into the 'edges' table.
   - Creates a temporary table with derived columns (node1_type, node1_id, node2_type, node2_id) and renames it to 'edges'.
   - Filters the edges table to keep only rows with allowed node types.

@@ -9,7 +9,7 @@ pubtator:
 
 database:
   pubtator_db: "./data/processed/pubtator.db"
-  
+
 download:
   chunk_size: 8192
 
@@ -24,3 +24,10 @@ database:
 
 nodes:
   table_name: "nodes"
+
+edges:
+  table_name: "edges"
+
+genes:
+  table_name: "homo_sapiens_genes"
+  index_column: "GeneID"

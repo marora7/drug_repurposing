@@ -1,0 +1,106 @@
+"""
+Preprocessing for filtering human gene nodes.
+
+This script deletes rows from the 'nodes' table where node_type is 'Gene'
+and where the node_id does not appear in the 'homo_sapiens_genes' table.
+"""
+
+import os
+import sqlite3
+import logging
+import yaml
+
+from src.utils.file_utils import log_progress
+
+# Configure logging
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+def load_config():
+    """
+    Loads configuration from config/config.yaml.
+    
+    Returns:
+        dict: The configuration dictionary.
+    """
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'config.yaml')
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
+
+def filter_human_genes(db_path, nodes_table, genes_table, gene_index_column):
+    """
+    Deletes rows from the nodes table where node_type is 'Gene' and the node_id 
+    does not exist in the genes table.
+    
+    Args:
+        db_path (str): Path to the SQLite database.
+        nodes_table (str): Name of the nodes table.
+        genes_table (str): Name of the genes table (e.g., 'homo_sapiens_genes').
+        gene_index_column (str): The column used for matching (e.g., "GeneID").
+    """
+    try:
+        connection = sqlite3.connect(db_path)
+        cursor = connection.cursor()
+
+        # Display initial row counts by node_type
+        initial_counts = cursor.execute(
+            f"""
+            SELECT node_type, COUNT(*) AS row_count
+            FROM {nodes_table}
+            GROUP BY node_type
+            """
+        ).fetchall()
+        log_progress("Initial row counts by node_type:")
+        for row in initial_counts:
+            log_progress(str(row))
+
+        # Create an index on the genes table for faster lookups
+        cursor.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_genes_{gene_index_column} ON {genes_table}({gene_index_column});"
+        )
+        connection.commit()
+
+        # Delete rows from nodes where node_type is 'Gene' and node_id is not present in the genes table.
+        delete_query = f"""
+        DELETE FROM {nodes_table}
+        WHERE node_type = 'Gene'
+          AND node_id NOT IN (
+            SELECT DISTINCT {gene_index_column}
+            FROM {genes_table}
+        );
+        """
+        cursor.execute(delete_query)
+        connection.commit()
+        log_progress(f"Deleted {cursor.rowcount} rows from '{nodes_table}' where node_type = 'Gene' and no matching {gene_index_column} was found.")
+
+        # Display final row counts by node_type
+        final_counts = cursor.execute(
+            f"""
+            SELECT node_type, COUNT(*) AS row_count
+            FROM {nodes_table}
+            GROUP BY node_type
+            """
+        ).fetchall()
+        log_progress("Final row counts by node_type:")
+        for row in final_counts:
+            log_progress(str(row))
+    except sqlite3.Error as e:
+        logging.error(f"Error occurred during filtering human genes: {e}")
+        raise
+    finally:
+        if 'connection' in locals() and connection:
+            connection.close()
+            log_progress("Database connection closed.")
+
+def main():
+    config = load_config()
+    db_path = config['database']['pubtator_db']
+    nodes_table = config['nodes']['table_name']      # e.g., "nodes"
+    genes_table = config['genes']['table_name']        # e.g., "homo_sapiens_genes"
+    gene_index_column = config['genes']['index_column']  # e.g., "GeneID"
+    
+    filter_human_genes(db_path, nodes_table, genes_table, gene_index_column)
+
+if __name__ == "__main__":
+    main()

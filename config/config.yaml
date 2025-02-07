@@ -31,3 +31,38 @@ edges:
 genes:
   table_name: "homo_sapiens_genes"
   index_column: "GeneID"
+
+transformation:
+  nodes:
+    query: >
+      SELECT 
+          node_type || ':' || node_id AS "Id:ID",
+          node_type AS ":LABEL",
+          node_name AS name
+      FROM nodes
+    output: "F:/datasets/nodes.csv.gz"
+
+  edges:
+    grouping:
+      drop_table: "DROP TABLE IF EXISTS edges_grouped;"
+      create_table: >
+        CREATE TABLE edges_grouped AS
+        SELECT 
+            node1_id,
+            node1_type,
+            node2_id,
+            node2_type,
+            edge_type,
+            COUNT(DISTINCT edge_id) AS unique_edge_count
+        FROM edges
+        GROUP BY node1_id, node1_type, node2_id, node2_type, edge_type;
+    export_query: >
+      SELECT 
+          node1_type || ':' || node1_id AS ":START_ID",
+          node1_type AS node1_type,
+          node2_type || ':' || node2_id AS ":END_ID",
+          node2_type AS node2_type,
+          edge_type AS ":TYPE",
+          unique_edge_count AS pmcount
+      FROM edges_grouped
+    output: "F:/datasets/edges.csv.gz"

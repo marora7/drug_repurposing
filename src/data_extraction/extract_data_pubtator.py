@@ -1,5 +1,5 @@
 """
-Extract data from Pubtator and load it into an SQLite database.
+Extract data from Pubtator and load it into SQLite database.
 
 This script downloads the Pubtator files (as configured in config/config.yaml),
 extracts them, parses them into DataFrames, and inserts the data into the
@@ -69,44 +69,8 @@ def main():
         # Ensure temporary directory exists
         ensure_directory_exists(temp_dir)
 
-        # Define SQL queries for creating tables
-        table_queries = {
-            "diseases": """
-                CREATE TABLE IF NOT EXISTS diseases (
-                    entity_id TEXT,
-                    entity_type TEXT,
-                    entity_label TEXT,
-                    entity_name TEXT,
-                    source TEXT
-                )
-            """,
-            "chemicals": """
-                CREATE TABLE IF NOT EXISTS chemicals (
-                    entity_id TEXT,
-                    entity_type TEXT,
-                    entity_label TEXT,
-                    entity_name TEXT,
-                    source TEXT
-                )
-            """,
-            "genes": """
-                CREATE TABLE IF NOT EXISTS genes (
-                    entity_id TEXT,
-                    entity_type TEXT,
-                    entity_label TEXT,
-                    entity_name TEXT,
-                    source TEXT
-                )
-            """,
-            "relations": """
-                CREATE TABLE IF NOT EXISTS relations (
-                    id TEXT,
-                    entity_relation TEXT,        
-                    entity1 TEXT,
-                    entity2 TEXT
-                )
-            """
-        }
+        # Load SQL queries for Pubtator tables from configuration
+        table_queries = config['pubtator']['sql']
 
         # Setup the SQLite database with required tables
         setup_database(db_file, table_queries)

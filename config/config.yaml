@@ -6,9 +6,42 @@ pubtator:
     - "gene2pubtator3.gz"
     - "relation2pubtator3.gz"
   temp_dir: "./data/raw/pubtator/temp"
+  sql:
+    diseases: |
+      CREATE TABLE IF NOT EXISTS diseases (
+          entity_id TEXT,
+          entity_type TEXT,
+          entity_label TEXT,
+          entity_name TEXT,
+          source TEXT
+      );
+    chemicals: |
+      CREATE TABLE IF NOT EXISTS chemicals (
+          entity_id TEXT,
+          entity_type TEXT,
+          entity_label TEXT,
+          entity_name TEXT,
+          source TEXT
+      );
+    genes: |
+      CREATE TABLE IF NOT EXISTS genes (
+          entity_id TEXT,
+          entity_type TEXT,
+          entity_label TEXT,
+          entity_name TEXT,
+          source TEXT
+      );
+    relations: |
+      CREATE TABLE IF NOT EXISTS relations (
+          id TEXT,
+          entity_relation TEXT,
+          entity1 TEXT,
+          entity2 TEXT
+      );
 
 database:
   pubtator_db: "./data/processed/pubtator.db"
+  ncbi_db: "./data/processed/ncbi.db"
 
 download:
   chunk_size: 8192
@@ -18,9 +51,26 @@ ncbi:
   gene_info_url: "https://ftp.ncbi.nih.gov/gene/DATA/GENE_INFO/Mammalia/"
   table_name: "homo_sapiens_genes"
   temp_dir: "./data/raw/ncbi/temp"
-
-database:
-  ncbi_db: "./data/processed/ncbi.db"
+  sql: |
+    DROP TABLE IF EXISTS {table_name};
+    CREATE TABLE {table_name} (
+        "[#tax_id]" TEXT,
+        GeneID TEXT,
+        Symbol TEXT,
+        LocusTag TEXT,
+        Synonyms TEXT,
+        dbXrefs TEXT,
+        chromosome TEXT,
+        map_location TEXT,
+        description TEXT,
+        type_of_gene TEXT,
+        Symbol_from_nomenclature_authority TEXT,
+        Full_name_from_nomenclature_authority TEXT,
+        Nomenclature_status TEXT,
+        Other_designations TEXT,
+        Modification_date TEXT,
+        Feature_type TEXT
+    );
 
 nodes:
   table_name: "nodes"

@@ -8,7 +8,7 @@ import sqlite3
 import pandas as pd
 import yaml
 
-# Import utilities from the new utils modules
+# Import utilities from the utils modules
 from src.utils.download_utils import download_file, extract_gz
 from src.utils.db_utils import insert_data_from_dataframe, read_first_rows
 from src.utils.file_utils import ensure_directory_exists, log_progress
@@ -31,49 +31,31 @@ def load_config():
     return config
 
 
-def create_homo_sapiens_genes_table(db_path, table_name):
+def create_homo_sapiens_genes_table(db_path, table_name, ncbi_config):
     """
-    Creates the homo_sapiens_genes table in the specified SQLite database.
+    Creates the homo_sapiens_genes table in the specified SQLite database using the SQL
+    defined in the YAML configuration.
     
     Args:
         db_path (str): Path to the SQLite database file.
         table_name (str): Name of the table to create.
+        ncbi_config (dict): NCBI configuration containing the SQL template.
     """
     try:
-        logging.info(f"Creating table {table_name} in database {db_path}")
+        logging.info(f"Creating table '{table_name}' in database '{db_path}'")
+        # Retrieve the SQL template from the configuration and substitute the table name.
+        sql_template = ncbi_config["sql"]
+        sql_query = sql_template.format(table_name=table_name)
+        
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-
-        # Drop the table if it exists
-        cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
-        logging.info(f"Table {table_name} dropped.")
-        
-        # Create the new table with the gene info schema
-        cursor.execute(f"""
-            CREATE TABLE {table_name} (
-                "[#tax_id]" TEXT,
-                GeneID TEXT,
-                Symbol TEXT,
-                LocusTag TEXT,
-                Synonyms TEXT,
-                dbXrefs TEXT,
-                chromosome TEXT,
-                map_location TEXT,
-                description TEXT,
-                type_of_gene TEXT,
-                Symbol_from_nomenclature_authority TEXT,
-                Full_name_from_nomenclature_authority TEXT,
-                Nomenclature_status TEXT,
-                Other_designations TEXT,
-                Modification_date TEXT,
-                Feature_type TEXT
-            )
-        """)
+        # Execute the SQL script 
+        cursor.executescript(sql_query)
         conn.commit()
         conn.close()
-        logging.info(f"Table {table_name} created successfully.")
+        logging.info(f"Table '{table_name}' created successfully.")
     except sqlite3.Error as e:
-        logging.error(f"Failed to create table {table_name}: {e}")
+        logging.error(f"Failed to create table '{table_name}': {e}")
         raise
 
 
@@ -114,7 +96,6 @@ def main():
         config = load_config()
         
         # Get NCBI-specific settings from the config file.
-        # (Make sure to add a "ncbi" section in your config file with these keys.)
         gene_info_file = config['ncbi']['gene_info_file']         # e.g., "Homo_sapiens.gene_info.gz"
         gene_info_url  = config['ncbi']['gene_info_url']           # e.g., "https://ftp.ncbi.nih.gov/gene/DATA/GENE_INFO/Mammalia/"
         table_name     = config['ncbi']['table_name']              # e.g., "homo_sapiens_genes"
@@ -124,14 +105,17 @@ def main():
         # Ensure the temporary directory exists.
         ensure_directory_exists(temp_dir)
         
-        # Create the homo_sapiens_genes table.
-        create_homo_sapiens_genes_table(db_file, table_name)
+        # Create the homo_sapiens_genes table using the SQL defined in the YAML config.
+        create_homo_sapiens_genes_table(db_file, table_name, config['ncbi'])
         
         # Process the gene info file.
         process_gene_info_file(db_file, table_name, gene_info_file, gene_info_url, temp_dir)
         
         # Optional: Read and display the first rows from the table.
-        read_first_rows(db_file, table_name)
+        df_preview = read_first_rows(db_file, table_name)
+        print(f"Preview of table '{table_name}':")
+        print(df_preview)
+        
     except Exception as e:
         logging.critical(f"Process failed: {e}")
 

@@ -28,7 +28,7 @@ def load_config():
         config = yaml.safe_load(f)
     return config
 
-def filter_human_genes(db_path, nodes_table, genes_table, gene_index_column):
+def filter_human_genes(db_path, nodes_table, genes_table, gene_index_column, queries):
     """
     Deletes rows from the nodes table where node_type is 'Gene' and the node_id 
     does not exist in the genes table.
@@ -38,50 +38,33 @@ def filter_human_genes(db_path, nodes_table, genes_table, gene_index_column):
         nodes_table (str): Name of the nodes table.
         genes_table (str): Name of the genes table (e.g., 'homo_sapiens_genes').
         gene_index_column (str): The column used for matching (e.g., "GeneID").
+        queries (dict): A dictionary of SQL query templates for gene_info_select.
     """
     try:
         connection = sqlite3.connect(db_path)
         cursor = connection.cursor()
 
-        # Display initial row counts by node_type
-        initial_counts = cursor.execute(
-            f"""
-            SELECT node_type, COUNT(*) AS row_count
-            FROM {nodes_table}
-            GROUP BY node_type
-            """
-        ).fetchall()
+        # Display initial row counts by node_type.
+        initial_counts_query = queries['nodes_counts_query'].format(nodes_table=nodes_table)
+        initial_counts = cursor.execute(initial_counts_query).fetchall()
         log_progress("Initial row counts by node_type:")
         for row in initial_counts:
             log_progress(str(row))
 
-        # Create an index on the genes table for faster lookups
-        cursor.execute(
-            f"CREATE INDEX IF NOT EXISTS idx_genes_{gene_index_column} ON {genes_table}({gene_index_column});"
+        # Delete rows from nodes where node_type is 'Gene'
+        # and node_id is not present in the genes table.
+        delete_query = queries['delete_query'].format(
+            nodes_table=nodes_table,
+            genes_table=genes_table,
+            gene_index_column=gene_index_column
         )
-        connection.commit()
-
-        # Delete rows from nodes where node_type is 'Gene' and node_id is not present in the genes table.
-        delete_query = f"""
-        DELETE FROM {nodes_table}
-        WHERE node_type = 'Gene'
-          AND node_id NOT IN (
-            SELECT DISTINCT {gene_index_column}
-            FROM {genes_table}
-        );
-        """
         cursor.execute(delete_query)
         connection.commit()
         log_progress(f"Deleted {cursor.rowcount} rows from '{nodes_table}' where node_type = 'Gene' and no matching {gene_index_column} was found.")
 
-        # Display final row counts by node_type
-        final_counts = cursor.execute(
-            f"""
-            SELECT node_type, COUNT(*) AS row_count
-            FROM {nodes_table}
-            GROUP BY node_type
-            """
-        ).fetchall()
+        # Display final row counts by node_type.
+        final_counts_query = queries['nodes_counts_query'].format(nodes_table=nodes_table)
+        final_counts = cursor.execute(final_counts_query).fetchall()
         log_progress("Final row counts by node_type:")
         for row in final_counts:
             log_progress(str(row))
@@ -96,11 +79,14 @@ def filter_human_genes(db_path, nodes_table, genes_table, gene_index_column):
 def main():
     config = load_config()
     db_path = config['database']['pubtator_db']
-    nodes_table = config['nodes']['table_name']      # e.g., "nodes"
-    genes_table = config['genes']['table_name']        # e.g., "homo_sapiens_genes"
-    gene_index_column = config['genes']['index_column']  # e.g., "GeneID"
-    
-    filter_human_genes(db_path, nodes_table, genes_table, gene_index_column)
+    nodes_table = config['nodes']['table_name']       # e.g., "nodes"
+    genes_table = config['genes']['table_name']         # e.g., "homo_sapiens_genes"
+    gene_index_column = config['genes']['index_column'] # e.g., "GeneID"
+
+    # Get the SQL query templates from the gene_info_select section.
+    queries = config['gene_info_select']
+
+    filter_human_genes(db_path, nodes_table, genes_table, gene_index_column, queries)
 
 if __name__ == "__main__":
     main()

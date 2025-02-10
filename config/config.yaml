@@ -74,13 +74,99 @@ ncbi:
 
 nodes:
   table_name: "nodes"
+  # SQL to drop (if exists) and create the nodes table.
+  sql: |
+    DROP TABLE IF EXISTS {table_name};
+    CREATE TABLE {table_name} (
+        node_type TEXT,
+        node_id TEXT,
+        node_name TEXT
+    );
+  # Template for processing source tables.
+  process_table_query: "SELECT {node_type_column}, {node_id_column}, {node_name_column} FROM {source_table}"
+  # Query to obtain statistics (row counts per node_type) from the nodes table.
+  stats_query: "SELECT node_type, COUNT(*) AS row_count FROM {table_name} GROUP BY node_type"
+  # Template for obtaining sample rows for a given node_type.
+  sample_query: "SELECT * FROM {table_name} WHERE node_type = '{node_type}' LIMIT 5"
+  # Query to select all rows from the nodes table.
+  select_all_query: "SELECT * FROM {table_name}"
+
+indexes:
+  # Indexes for source tables and nodes table.
+  diseases_entity: "CREATE INDEX IF NOT EXISTS idx_diseases_entity ON diseases(entity_type, entity_label);"
+  chemicals_entity: "CREATE INDEX IF NOT EXISTS idx_chemicals_entity ON chemicals(entity_type, entity_label);"
+  genes_entity: "CREATE INDEX IF NOT EXISTS idx_genes_entity ON genes(entity_type, entity_label);"
+  nodes_entity: "CREATE INDEX IF NOT EXISTS idx_nodes ON nodes(node_type, node_id);"
+  # New index for genes on the GeneID column:
+  genes_geneid: "CREATE INDEX IF NOT EXISTS idx_genes_geneid ON genes({index_column});"
+
 
 edges:
   table_name: "edges"
+  # SQL to drop (if exists) and create the edges table.
+  sql: |
+    DROP TABLE IF EXISTS {table_name};
+    CREATE TABLE {table_name} (
+        edge_id TEXT,
+        edge_type TEXT,
+        node1 TEXT,
+        node2 TEXT
+    );
+  # SQL to insert data from the relations table.
+  insert_sql: |
+    INSERT INTO {table_name} (edge_id, edge_type, node1, node2)
+    SELECT id AS edge_id, entity_relation AS edge_type, entity1 AS node1, entity2 AS node2
+    FROM relations;
+  # SQL to create a temporary table with derived columns.
+  temp_sql: |
+    CREATE TABLE edges_temp AS
+    SELECT *,
+           SUBSTR(node1, 1, INSTR(node1, '|') - 1) AS node1_type,
+           SUBSTR(node1, INSTR(node1, '|') + 1) AS node1_id,
+           SUBSTR(node2, 1, INSTR(node2, '|') - 1) AS node2_type,
+           SUBSTR(node2, INSTR(node2, '|') + 1) AS node2_id
+    FROM {table_name};
+  # SQL to drop the original table and rename the temporary table.
+  drop_temp_and_rename_sql: |
+    DROP TABLE {table_name};
+    ALTER TABLE edges_temp RENAME TO {table_name};
+  # Query to count rows in the edges table.
+  count_sql: "SELECT COUNT(*) FROM {table_name};"
+  # Query to count rows that do not meet the allowed node types.
+  filter_count_sql: |
+    SELECT COUNT(*)
+    FROM {table_name}
+    WHERE node1_type NOT IN ('Disease', 'Gene', 'Chemical')
+       OR node2_type NOT IN ('Disease', 'Gene', 'Chemical');
+  # SQL to create a filtered table with only allowed node types.
+  filter_create_sql: |
+    CREATE TABLE edges_filtered AS
+    SELECT *
+    FROM {table_name}
+    WHERE node1_type IN ('Disease', 'Gene', 'Chemical')
+      AND node2_type IN ('Disease', 'Gene', 'Chemical');
+  # SQL to delete rows with unmatched nodes.
+  delete_unmatched_sql: |
+    DELETE FROM {table_name}
+    WHERE node1 NOT IN (SELECT node_type || '|' || node_id FROM nodes)
+       OR node2 NOT IN (SELECT node_type || '|' || node_id FROM nodes);
 
 genes:
   table_name: "homo_sapiens_genes"
   index_column: "GeneID"
+
+gene_info_select:
+  # Query to get row counts by node_type from the nodes table.
+  nodes_counts_query: "SELECT node_type, COUNT(*) AS row_count FROM {nodes_table} GROUP BY node_type"
+  # Query to delete rows from the nodes table where node_type is 'Gene'
+  # and node_id does not appear in the genes table (matching on GeneID).
+  delete_query: |
+    DELETE FROM {nodes_table}
+    WHERE node_type = 'Gene'
+      AND node_id NOT IN (
+        SELECT DISTINCT {gene_index_column}
+        FROM {genes_table}
+      );
 
 transformation:
   nodes:

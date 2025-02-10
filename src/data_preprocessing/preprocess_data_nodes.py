@@ -2,7 +2,7 @@
 Data cleaning and preprocessing for nodes (Knowledge Graph).
 
 This script:
-  - Drops the existing 'nodes' table (if any) and then creates a new one.
+  - Drops the existing 'nodes' table (if any) and then creates a new one based on the SQL defined in the config.
   - Processes data from source tables ('diseases', 'chemicals', 'genes') into the 'nodes' table.
   - Creates indexes, displays statistics, and cleans the nodes data.
 """
@@ -40,7 +40,7 @@ def load_config():
     return config
 
 
-def process_table_to_nodes_with_pandas(connection, source_table, node_type_column, node_id_column, node_name_column):
+def process_table_to_nodes_with_pandas(connection, source_table, node_type_column, node_id_column, node_name_column, process_table_query):
     """
     Uses Pandas to process a source table and insert grouped data into the 'nodes' table.
     
@@ -50,37 +50,43 @@ def process_table_to_nodes_with_pandas(connection, source_table, node_type_colum
         node_type_column (str): Column name for node type.
         node_id_column (str): Column name for node ID.
         node_name_column (str): Column name for node name.
+        process_table_query (str): SQL template for selecting data from the source table.
+                                   Expected placeholders: {node_type_column}, {node_id_column}, {node_name_column}, {source_table}.
     """
     try:
-        query = f"SELECT {node_type_column}, {node_id_column}, {node_name_column} FROM {source_table}"
+        query = process_table_query.format(
+            node_type_column=node_type_column,
+            node_id_column=node_id_column,
+            node_name_column=node_name_column,
+            source_table=source_table
+        )
         df = pd.read_sql_query(query, connection)
         df[node_name_column] = df[node_name_column].fillna('')
         grouped_df = df.groupby([node_type_column, node_id_column])[node_name_column].agg('|'.join).reset_index()
         grouped_df.columns = ['node_type', 'node_id', 'node_name']
         grouped_df.to_sql('nodes', connection, if_exists='append', index=False)
-        log_progress(f"Data from '{source_table}' successfully processed into the 'nodes' table using Pandas.")
+        log_progress(f"Data from '{source_table}' successfully processed into the 'nodes' table.")
     except sqlite3.Error as e:
-        logging.error(f"Error processing table '{source_table}' using Pandas: {e}")
+        logging.error(f"Error processing table '{source_table}': {e}")
         raise
     except Exception as e:
         logging.error(f"Unexpected error processing table '{source_table}': {e}")
         raise
 
 
-def create_indexes(connection):
+def create_indexes(connection, indexes_config):
     """
-    Creates indexes on the source tables and the 'nodes' table to optimize performance.
+    Creates indexes on the source tables and the 'nodes' table based on the provided SQL queries.
     
     Args:
         connection (sqlite3.Connection): Active database connection.
+        indexes_config (dict): A dictionary of SQL index creation queries.
     """
     try:
         cursor = connection.cursor()
-        logging.info("Creating indexes for source tables...")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_diseases_entity ON diseases(entity_type, entity_label);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chemicals_entity ON chemicals(entity_type, entity_label);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_genes_entity ON genes(entity_type, entity_label);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_nodes_node ON nodes(node_type, node_id);")
+        logging.info("Creating indexes for source tables and nodes table...")
+        for query in indexes_config.values():
+            cursor.execute(query)
         connection.commit()
         logging.info("Indexes created successfully.")
     except sqlite3.Error as e:
@@ -88,31 +94,25 @@ def create_indexes(connection):
         raise
 
 
-def display_node_statistics(connection):
+def display_node_statistics(connection, stats_query, sample_query, table_name):
     """
     Displays the row count and first 5 rows for each node_type in the 'nodes' table.
     
     Args:
         connection (sqlite3.Connection): Active database connection.
+        stats_query (str): SQL query template for statistics; expected to have a {table_name} placeholder.
+        sample_query (str): SQL query template for sample rows; expected placeholders: {table_name}, {node_type}.
+        table_name (str): The name of the nodes table.
     """
     try:
-        query = """
-            SELECT node_type, COUNT(*) AS row_count
-            FROM nodes
-            GROUP BY node_type
-        """
+        query = stats_query.format(table_name=table_name)
         stats = pd.read_sql_query(query, connection)
         logging.info("Row counts by node_type:")
         logging.info(f"\n{stats}")
 
         for node_type in stats['node_type']:
             logging.info(f"First 5 rows for node_type: {node_type}")
-            query_sample = f"""
-                SELECT *
-                FROM nodes
-                WHERE node_type = '{node_type}'
-                LIMIT 5
-            """
+            query_sample = sample_query.format(table_name=table_name, node_type=node_type)
             sample_data = pd.read_sql_query(query_sample, connection)
             logging.info(f"\n{sample_data}")
     except sqlite3.Error as e:
@@ -120,33 +120,18 @@ def display_node_statistics(connection):
         raise
 
 
-def create_composite_index_nodes(connection):
-    """
-    Creates a composite index 'idx_nodes' on the 'node_type' and 'node_id' columns in the 'nodes' table.
-    
-    Args:
-        connection (sqlite3.Connection): Active database connection.
-    """
-    try:
-        cursor = connection.cursor()
-        logging.info("Creating composite index 'idx_nodes' on 'node_type' and 'node_id' in the 'nodes' table...")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_nodes ON nodes(node_type, node_id);")
-        connection.commit()
-        logging.info("Composite index 'idx_nodes' created successfully.")
-    except sqlite3.Error as e:
-        logging.error(f"Error creating composite index 'idx_nodes': {e}")
-        raise
-
-
-def clean_nodes_table(connection):
+def clean_nodes_table(connection, select_all_query, stats_query, table_name):
     """
     Cleans the 'nodes' table by removing rows with missing or invalid values in 'node_id' and 'node_name'.
     
     Args:
         connection (sqlite3.Connection): Active database connection.
+        select_all_query (str): SQL query template to select all rows from the nodes table (expects {table_name} placeholder).
+        stats_query (str): SQL query template to get row counts grouped by node_type (expects {table_name} placeholder).
+        table_name (str): The name of the nodes table.
     """
     try:
-        query = "SELECT * FROM nodes"
+        query = select_all_query.format(table_name=table_name)
         nodes_df = pd.read_sql_query(query, connection)
 
         missing_node_id = nodes_df['node_id'].isnull().sum() + (nodes_df['node_id'] == '').sum()
@@ -165,28 +150,24 @@ def clean_nodes_table(connection):
         logging.info(f"{len(rows_starting_with_pipe)} rows with 'node_name' starting with '|' will be updated.")
         cleaned_df.loc[:, 'node_name'] = cleaned_df['node_name'].str.lstrip('|')
 
-        # Overwrite the 'nodes' table with the cleaned data
-        cleaned_df.to_sql('nodes', connection, if_exists='replace', index=False)
+        # Overwrite the nodes table with the cleaned data
+        cleaned_df.to_sql(table_name, connection, if_exists='replace', index=False)
 
-        row_count_query = """
-            SELECT node_type, COUNT(*) AS row_count
-            FROM nodes
-            GROUP BY node_type
-        """
-        stats = pd.read_sql_query(row_count_query, connection)
+        stats = pd.read_sql_query(stats_query.format(table_name=table_name), connection)
         logging.info("Updated row counts by node_type:")
         logging.info(f"\n{stats}")
 
     except sqlite3.Error as e:
-        logging.error(f"Error cleaning 'nodes' table: {e}")
+        logging.error(f"Error cleaning '{table_name}' table: {e}")
         raise
     except Exception as e:
-        logging.error(f"Unexpected error during cleaning of 'nodes' table: {e}")
+        logging.error(f"Unexpected error during cleaning of '{table_name}' table: {e}")
         raise
 
 
 def main():
     try:
+        # Load configuration
         config = load_config()
         db_path = config['database']['pubtator_db']
         nodes_table = config['nodes']['table_name']
@@ -195,37 +176,28 @@ def main():
         connection = sqlite3.connect(db_path)
         logging.info("Database connection successful.")
 
-        # Directly drop the table if it exists
+        # Drop the 'nodes' table if it exists and create a new one using the SQL defined in config.
         drop_table_if_exists(connection, nodes_table)
-        # Then create the new 'nodes' table
-        create_query = f"""
-            CREATE TABLE {nodes_table} (
-                node_type TEXT,
-                node_id TEXT,
-                node_name TEXT
-            )
-        """
-        create_table(connection, create_query)
+        nodes_create_sql = config['nodes']['sql'].format(table_name=nodes_table)
+        create_table(connection, nodes_create_sql)
 
-        # Step 2: Create indexes on the source tables.
-        create_indexes(connection)
+        # Step 2: Create indexes on the source tables and nodes table.
+        create_indexes(connection, config['indexes'])
         
         # Step 3: Process source tables into the 'nodes' table.
         logging.info("Processing source tables into the 'nodes' table using Pandas.")
-        process_table_to_nodes_with_pandas(connection, 'diseases', 'entity_type', 'entity_label', 'entity_name')
-        process_table_to_nodes_with_pandas(connection, 'chemicals', 'entity_type', 'entity_label', 'entity_name')
-        process_table_to_nodes_with_pandas(connection, 'genes', 'entity_type', 'entity_label', 'entity_name')
+        process_table_query = config['nodes']['process_table_query']
+        process_table_to_nodes_with_pandas(connection, 'diseases', 'entity_type', 'entity_label', 'entity_name', process_table_query)
+        process_table_to_nodes_with_pandas(connection, 'chemicals', 'entity_type', 'entity_label', 'entity_name', process_table_query)
+        process_table_to_nodes_with_pandas(connection, 'genes', 'entity_type', 'entity_label', 'entity_name', process_table_query)
         connection.commit()
         logging.info("All source tables processed into the 'nodes' table successfully.")
         
         # Step 4: Display node statistics.
-        display_node_statistics(connection)
+        display_node_statistics(connection, config['nodes']['stats_query'], config['nodes']['sample_query'], nodes_table)
         
-        # Step 5: Create a composite index on the 'nodes' table.
-        create_composite_index_nodes(connection)
-        
-        # Step 6: Clean the 'nodes' table.
-        clean_nodes_table(connection)
+        # Step 5: Clean the 'nodes' table.
+        clean_nodes_table(connection, config['nodes']['select_all_query'], config['nodes']['stats_query'], nodes_table)
         
     except sqlite3.Error as e:
         logging.error(f"Database operation failed: {e}")

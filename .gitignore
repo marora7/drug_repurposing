@@ -26,6 +26,7 @@ dist/
 # Data directories (raw and processed)
 data/processed/
 data/raw/
+data/exports/
 
 # (Optional) If you have output datasets not meant for source control:
 datasets/*

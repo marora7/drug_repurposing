@@ -57,9 +57,9 @@ def run_transformation():
     """Run the data transformation modules in the sequence."""
     print("=== Starting Data Transformation for Knowledge Graph===")
     print("Transforming nodes data")
-    transform_nodes()  # Calls main() from transform_data_nodes.py
+    transform_nodes([])  # Pass an empty list to avoid picking up --pipeline
     print("Transforming edges data")
-    transform_edges()  # Calls main() from transform_data_edges.py
+    transform_edges([])
     print("=== Data Transformation Completed ===\n")
 
 def run_knowledge_graph():

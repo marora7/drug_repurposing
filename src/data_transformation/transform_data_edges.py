@@ -11,8 +11,8 @@ import sqlite3
 import logging
 import argparse
 
-from ..utils.config_utils import load_config
-from ..utils.export_utils import export_table_to_csv
+from src.utils.config_utils import load_config
+from src.utils.export_utils import export_table_to_csv
 
 def group_edges(cursor, grouping_config):
     """
@@ -37,16 +37,17 @@ def group_edges(cursor, grouping_config):
         logging.error("Error during grouping edges: %s", e)
         raise
 
-def main():
+def main(cli_args=None):
     parser = argparse.ArgumentParser(
         description="Transform edges data and export to CSV."
     )
     parser.add_argument(
         "--config",
-        required=True,
-        help="Path to YAML configuration file (e.g., config/config.yaml)"
+        default="src/config/config.yaml",
+        help="Path to YAML configuration file (default: src/config/config.yaml)"
     )
-    args = parser.parse_args()
+    # Use cli_args if provided, otherwise use sys.argv
+    args = parser.parse_args(cli_args)
 
     # Load configuration from YAML file.
     config = load_config(args.config)
@@ -88,8 +89,4 @@ def main():
         logging.info("Database connection closed.")
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO, 
-        format="%(asctime)s [%(levelname)s] %(message)s"
-    )
     main()

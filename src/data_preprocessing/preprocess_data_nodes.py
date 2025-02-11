@@ -86,7 +86,7 @@ def create_indexes(connection, indexes_config):
         cursor = connection.cursor()
         logging.info("Creating indexes for source tables and nodes table...")
         for query in indexes_config.values():
-            cursor.execute(query)
+            cursor.executescript(query)
         connection.commit()
         logging.info("Indexes created successfully.")
     except sqlite3.Error as e:

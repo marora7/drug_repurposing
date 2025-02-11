@@ -28,7 +28,7 @@ def load_config():
         config = yaml.safe_load(f)
     return config
 
-def filter_human_genes(db_path, nodes_table, genes_table, gene_index_column, queries):
+def filter_human_genes(db_path, ncbi_db_path, nodes_table, genes_table, gene_index_column, queries):
     """
     Deletes rows from the nodes table where node_type is 'Gene' and the node_id 
     does not exist in the genes table.
@@ -44,15 +44,19 @@ def filter_human_genes(db_path, nodes_table, genes_table, gene_index_column, que
         connection = sqlite3.connect(db_path)
         cursor = connection.cursor()
 
+        # Attach the ncbi.db database with the alias 'ncbi'
+        cursor.execute("ATTACH DATABASE ? AS ncbi", (ncbi_db_path,))
+
         # Display initial row counts by node_type.
         initial_counts_query = queries['nodes_counts_query'].format(nodes_table=nodes_table)
-        initial_counts = cursor.execute(initial_counts_query).fetchall()
+        cursor.execute(initial_counts_query)
+        initial_counts = cursor.fetchall()
         log_progress("Initial row counts by node_type:")
         for row in initial_counts:
             log_progress(str(row))
 
         # Delete rows from nodes where node_type is 'Gene'
-        # and node_id is not present in the genes table.
+        # and node_id is not present in the genes table in the attached ncbi db.
         delete_query = queries['delete_query'].format(
             nodes_table=nodes_table,
             genes_table=genes_table,
@@ -64,7 +68,8 @@ def filter_human_genes(db_path, nodes_table, genes_table, gene_index_column, que
 
         # Display final row counts by node_type.
         final_counts_query = queries['nodes_counts_query'].format(nodes_table=nodes_table)
-        final_counts = cursor.execute(final_counts_query).fetchall()
+        cursor.execute(final_counts_query)
+        final_counts = cursor.fetchall()
         log_progress("Final row counts by node_type:")
         for row in final_counts:
             log_progress(str(row))
@@ -78,7 +83,10 @@ def filter_human_genes(db_path, nodes_table, genes_table, gene_index_column, que
 
 def main():
     config = load_config()
+    # Use pubtator.db because the nodes table is there.
     db_path = config['database']['pubtator_db']
+    # Retrieve ncbi_db path for attaching.
+    ncbi_db_path = config['database']['ncbi_db']
     nodes_table = config['nodes']['table_name']       # e.g., "nodes"
     genes_table = config['genes']['table_name']         # e.g., "homo_sapiens_genes"
     gene_index_column = config['genes']['index_column'] # e.g., "GeneID"
@@ -86,7 +94,7 @@ def main():
     # Get the SQL query templates from the gene_info_select section.
     queries = config['gene_info_select']
 
-    filter_human_genes(db_path, nodes_table, genes_table, gene_index_column, queries)
+    filter_human_genes(db_path, ncbi_db_path, nodes_table, genes_table, gene_index_column, queries)
 
 if __name__ == "__main__":
     main()

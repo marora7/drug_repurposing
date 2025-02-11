@@ -134,12 +134,12 @@ def filter_edges_table(connection, edges_table, config):
 
         # Create a filtered table.
         filter_create_sql = config['edges']['filter_create_sql'].format(table_name=edges_table)
-        cursor.execute(filter_create_sql)
+        cursor.executescript(filter_create_sql)
         connection.commit()
 
         # Replace the original table with the filtered table.
-        cursor.execute(f"DROP TABLE {edges_table};")
-        cursor.execute(f"ALTER TABLE edges_filtered RENAME TO {edges_table};")
+        cursor.executescript(f"DROP TABLE {edges_table};")
+        cursor.executescript(f"ALTER TABLE edges_filtered RENAME TO {edges_table};")
         connection.commit()
 
         # Display final row count.

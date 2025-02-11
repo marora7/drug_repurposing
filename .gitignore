@@ -1,0 +1,52 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+env/
+venv/
+ENV/
+.env/
+.venv/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Log files
+*.log
+
+# SQLite databases (if generated)
+*.db
+*.sqlite3
+
+# Data directories (raw and processed)
+data/processed/
+data/raw/
+
+# (Optional) If you have output datasets not meant for source control:
+datasets/*
+
+# IDEs and editor settings
+.vscode/
+.idea/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Coverage and test reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+
+# Temporary files
+*.tmp
+*.bak
+*.swp

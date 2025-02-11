@@ -40,8 +40,8 @@ pubtator:
       );
 
 database:
-  pubtator_db: "./data/processed/pubtator.db"
-  ncbi_db: "./data/processed/ncbi.db"
+  pubtator_db: "data/processed/pubtator.db"
+  ncbi_db: "data/processed/ncbi.db"
 
 download:
   chunk_size: 8192
@@ -98,7 +98,7 @@ indexes:
   genes_entity: "CREATE INDEX IF NOT EXISTS idx_genes_entity ON genes(entity_type, entity_label);"
   nodes_entity: "CREATE INDEX IF NOT EXISTS idx_nodes ON nodes(node_type, node_id);"
   # New index for genes on the GeneID column:
-  genes_geneid: "CREATE INDEX IF NOT EXISTS idx_genes_geneid ON genes({index_column});"
+  genes_geneid: "CREATE INDEX IF NOT EXISTS idx_genes_geneid ON genes(entity_label);"
 
 
 edges:
@@ -165,7 +165,7 @@ gene_info_select:
     WHERE node_type = 'Gene'
       AND node_id NOT IN (
         SELECT DISTINCT {gene_index_column}
-        FROM {genes_table}
+        FROM ncbi.{genes_table}
       );
 
 transformation:

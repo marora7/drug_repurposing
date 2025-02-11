@@ -142,7 +142,7 @@ def create_table(connection, create_query):
     try:
         cursor = connection.cursor()
         logging.info("Creating table using provided query.")
-        cursor.execute(create_query)
+        cursor.executescript(create_query)
         connection.commit()
         logging.info("Table created successfully.")
     except Exception as e:

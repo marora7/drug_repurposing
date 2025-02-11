@@ -5,7 +5,7 @@ import csv
 import gzip
 import logging
 
-from utils.file_utils import ensure_directory_exists
+from .file_utils import ensure_directory_exists
 
 logger = logging.getLogger(__name__)
 

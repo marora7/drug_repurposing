@@ -11,8 +11,8 @@ import sqlite3
 import logging
 import argparse
 
-from utils.config_utils import load_config
-from utils.export_utils import export_table_to_csv
+from ..utils.config_utils import load_config
+from ..utils.export_utils import export_table_to_csv
 
 def group_edges(cursor, grouping_config):
     """

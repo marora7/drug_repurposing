@@ -176,7 +176,7 @@ transformation:
           node_type AS ":LABEL",
           node_name AS name
       FROM nodes
-    output: "F:/datasets/nodes.csv.gz"
+    output: "data/exports/nodes.csv.gz"
 
   edges:
     grouping:
@@ -201,7 +201,7 @@ transformation:
           edge_type AS ":TYPE",
           unique_edge_count AS pmcount
       FROM edges_grouped
-    output: "F:/datasets/edges.csv.gz"
+    output: "data/exports/edges.csv.gz"
 
 knowledge_graph:
   neo4j_bin_dir: "C:\\Users\\Manali Arora\\.Neo4jDesktop\\relate-data\\dbmss\\dbms-68825c1d-13da-4e5e-94df-454c0cafee7a\\bin"

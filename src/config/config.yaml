@@ -204,10 +204,11 @@ transformation:
     output: "data/exports/edges.csv.gz"
 
 knowledge_graph:
-  neo4j_bin_dir: "C:\\Users\\Manali Arora\\.Neo4jDesktop\\relate-data\\dbmss\\dbms-68825c1d-13da-4e5e-94df-454c0cafee7a\\bin"
+  neo4j_bin_dir: "C:/Users/YourName/.Neo4jDesktop/relate-data/dbmss/dbms-<id>/bin"
   neo4j_admin: "neo4j-admin.bat"
-  nodes_csv_gz: "F:/datasets/nodes.csv.gz"
-  edges_csv_gz: "F:/datasets/edges.csv.gz"
-  nodes_csv: "F:/datasets/nodes.csv"
-  edges_csv: "F:/datasets/edges.csv"
+  nodes_csv_gz: "data/exports/nodes.csv.gz"
+  edges_csv_gz: "data/exports/edges.csv.gz"
+  nodes_csv: "data/exports/nodes.csv"
+  edges_csv: "data/exports/edges.csv"
   database_name: "drugrepurposing"
+

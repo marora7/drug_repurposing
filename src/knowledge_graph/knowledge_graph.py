@@ -7,7 +7,7 @@ import gzip
 import shutil
 import argparse
 
-from ..utils.config_utils import load_config
+from src.utils.config_utils import load_config
 
 def decompress_gzip(source_gz, dest_csv):
     """

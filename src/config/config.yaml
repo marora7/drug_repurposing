@@ -212,3 +212,6 @@ knowledge_graph:
   edges_csv: "data/exports/edges.csv"
   database_name: "drugrepurposing"
 
+
+ml_input_dir: "data/processed/ml_input"
+

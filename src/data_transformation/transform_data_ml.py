@@ -54,12 +54,11 @@ def transform_edges(edges_file, chemical_mapping, disease_mapping, gene_mapping,
       - drug_disease.csv: chemicals (rows) x diseases (columns)
       - drug_gene.csv: chemicals x genes
       - disease_gene.csv: diseases x genes
+      
+    This version uses chunked reading and vectorized processing to handle huge datasets.
     """
     logger.info("Loading edges from: %s", edges_file)
-    edges = pd.read_csv(edges_file, compression='gzip')
-    edges['node1_type'] = edges['node1_type'].str.lower()
-    edges['node2_type'] = edges['node2_type'].str.lower()
-
+    
     n_chem = len(chemical_mapping)
     n_dis  = len(disease_mapping)
     n_gene = len(gene_mapping)
@@ -68,32 +67,79 @@ def transform_edges(edges_file, chemical_mapping, disease_mapping, gene_mapping,
     drug_gene_matrix    = np.zeros((n_chem, n_gene), dtype=int)
     disease_gene_matrix = np.zeros((n_dis, n_gene), dtype=int)
 
-    for _, row in edges.iterrows():
-        type1 = row['node1_type']
-        type2 = row['node2_type']
-        id1   = row[':START_ID']
-        id2   = row[':END_ID']
+    chunksize = 100000  # adjust this based on your memory and performance needs
+    for chunk in pd.read_csv(edges_file, compression='gzip', chunksize=chunksize):
+        # Convert node types to lowercase
+        chunk['node1_type'] = chunk['node1_type'].str.lower()
+        chunk['node2_type'] = chunk['node2_type'].str.lower()
 
-        if type1 == 'chemical' and type2 == 'disease':
-            if id1 in chemical_mapping and id2 in disease_mapping:
-                drug_disease_matrix[chemical_mapping[id1], disease_mapping[id2]] = 1
-        elif type1 == 'disease' and type2 == 'chemical':
-            if id2 in chemical_mapping and id1 in disease_mapping:
-                drug_disease_matrix[chemical_mapping[id2], disease_mapping[id1]] = 1
-        elif type1 == 'chemical' and type2 == 'gene':
-            if id1 in chemical_mapping and id2 in gene_mapping:
-                drug_gene_matrix[chemical_mapping[id1], gene_mapping[id2]] = 1
-        elif type1 == 'gene' and type2 == 'chemical':
-            if id2 in chemical_mapping and id1 in gene_mapping:
-                drug_gene_matrix[chemical_mapping[id2], gene_mapping[id1]] = 1
-        elif type1 == 'disease' and type2 == 'gene':
-            if id1 in disease_mapping and id2 in gene_mapping:
-                disease_gene_matrix[disease_mapping[id1], gene_mapping[id2]] = 1
-        elif type1 == 'gene' and type2 == 'disease':
-            if id2 in disease_mapping and id1 in gene_mapping:
-                disease_gene_matrix[disease_mapping[id2], gene_mapping[id1]] = 1
+        # Process chemical-disease edges
+        mask_cd = (chunk['node1_type'] == 'chemical') & (chunk['node2_type'] == 'disease')
+        cd = chunk.loc[mask_cd, [':START_ID', ':END_ID']]
+        if not cd.empty:
+            cd['row'] = cd[':START_ID'].map(chemical_mapping)
+            cd['col'] = cd[':END_ID'].map(disease_mapping)
+            cd = cd.dropna(subset=['row', 'col'])
+            rows = cd['row'].astype(int).values
+            cols = cd['col'].astype(int).values
+            drug_disease_matrix[rows, cols] = 1
 
-    # Save association matrices (no header/index as expected by the ML code)
+        # Process disease-chemical edges
+        mask_dc = (chunk['node1_type'] == 'disease') & (chunk['node2_type'] == 'chemical')
+        dc = chunk.loc[mask_dc, [':START_ID', ':END_ID']]
+        if not dc.empty:
+            dc['row'] = dc[':END_ID'].map(chemical_mapping)
+            dc['col'] = dc[':START_ID'].map(disease_mapping)
+            dc = dc.dropna(subset=['row', 'col'])
+            rows = dc['row'].astype(int).values
+            cols = dc['col'].astype(int).values
+            drug_disease_matrix[rows, cols] = 1
+
+        # Process chemical-gene edges
+        mask_cg = (chunk['node1_type'] == 'chemical') & (chunk['node2_type'] == 'gene')
+        cg = chunk.loc[mask_cg, [':START_ID', ':END_ID']]
+        if not cg.empty:
+            cg['row'] = cg[':START_ID'].map(chemical_mapping)
+            cg['col'] = cg[':END_ID'].map(gene_mapping)
+            cg = cg.dropna(subset=['row', 'col'])
+            rows = cg['row'].astype(int).values
+            cols = cg['col'].astype(int).values
+            drug_gene_matrix[rows, cols] = 1
+
+        # Process gene-chemical edges
+        mask_gc = (chunk['node1_type'] == 'gene') & (chunk['node2_type'] == 'chemical')
+        gc = chunk.loc[mask_gc, [':START_ID', ':END_ID']]
+        if not gc.empty:
+            gc['row'] = gc[':END_ID'].map(chemical_mapping)
+            gc['col'] = gc[':START_ID'].map(gene_mapping)
+            gc = gc.dropna(subset=['row', 'col'])
+            rows = gc['row'].astype(int).values
+            cols = gc['col'].astype(int).values
+            drug_gene_matrix[rows, cols] = 1
+
+        # Process disease-gene edges
+        mask_dg = (chunk['node1_type'] == 'disease') & (chunk['node2_type'] == 'gene')
+        dg = chunk.loc[mask_dg, [':START_ID', ':END_ID']]
+        if not dg.empty:
+            dg['row'] = dg[':START_ID'].map(disease_mapping)
+            dg['col'] = dg[':END_ID'].map(gene_mapping)
+            dg = dg.dropna(subset=['row', 'col'])
+            rows = dg['row'].astype(int).values
+            cols = dg['col'].astype(int).values
+            disease_gene_matrix[rows, cols] = 1
+
+        # Process gene-disease edges
+        mask_gd = (chunk['node1_type'] == 'gene') & (chunk['node2_type'] == 'disease')
+        gd = chunk.loc[mask_gd, [':START_ID', ':END_ID']]
+        if not gd.empty:
+            gd['row'] = gd[':END_ID'].map(disease_mapping)
+            gd['col'] = gd[':START_ID'].map(gene_mapping)
+            gd = gd.dropna(subset=['row', 'col'])
+            rows = gd['row'].astype(int).values
+            cols = gd['col'].astype(int).values
+            disease_gene_matrix[rows, cols] = 1
+
+    # Save association matrices (they will overwrite existing files)
     pd.DataFrame(drug_disease_matrix).to_csv(os.path.join(output_dir, 'drug_disease.csv'),
                                              header=False, index=False)
     pd.DataFrame(drug_gene_matrix).to_csv(os.path.join(output_dir, 'drug_gene.csv'),
@@ -104,6 +150,7 @@ def transform_edges(edges_file, chemical_mapping, disease_mapping, gene_mapping,
     logger.info("Association matrices created: drug_disease %s, drug_gene %s, disease_gene %s",
                 drug_disease_matrix.shape, drug_gene_matrix.shape, disease_gene_matrix.shape)
     return drug_disease_matrix, drug_gene_matrix, disease_gene_matrix
+
 
 def compute_similarity_matrices(drug_disease_matrix, drug_gene_matrix, disease_gene_matrix, output_dir):
     """

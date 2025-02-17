@@ -7,8 +7,9 @@ import numpy as np
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 
-# Import your configuration loader
+# Import configuration loader
 from src.utils.config_utils import load_config
+from src.utils.seed_utils import set_seed
 
 def topk_filtering(matrix: np.array, k: int) -> np.array:
     """
@@ -80,7 +81,6 @@ def meta_path_instance(config, chem_id: int, dis_id: int, links: dict, k: int):
     target_len = k * (k + 2) + 1
     if len(mpi) < target_len:
         for _ in range(target_len - len(mpi)):
-            random.seed(config.get("seed", 42))
             mpi.append(random.choice(mpi))
     elif len(mpi) > target_len:
         mpi = mpi[:target_len]

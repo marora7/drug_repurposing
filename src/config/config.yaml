@@ -215,3 +215,6 @@ knowledge_graph:
 
 ml_input_dir: "data/processed/ml_input"
 
+seed: 0
+
+k: 15

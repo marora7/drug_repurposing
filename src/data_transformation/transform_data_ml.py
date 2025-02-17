@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Transform the already exported nodes and edges into ML input format.
 
@@ -52,9 +51,9 @@ def transform_nodes(nodes_file, output_dir):
 def transform_edges(edges_file, chemical_mapping, disease_mapping, gene_mapping, output_dir):
     """
     Read edges CSV and create association matrices:
-      - drug_disease.csv: chemicals (rows) × diseases (columns)
-      - drug_gene.csv: chemicals × genes
-      - disease_gene.csv: diseases × genes
+      - drug_disease.csv: chemicals (rows) x diseases (columns)
+      - drug_gene.csv: chemicals x genes
+      - disease_gene.csv: diseases x genes
     """
     logger.info("Loading edges from: %s", edges_file)
     edges = pd.read_csv(edges_file, compression='gzip')

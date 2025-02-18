@@ -1,6 +1,6 @@
 import argparse
 import logging
-from src.knowledge_graph.importer import import_knowledge_graph
+from knowledge_graph.kg_importer import import_knowledge_graph
 
 def main():
     parser = argparse.ArgumentParser(

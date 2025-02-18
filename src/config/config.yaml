@@ -199,7 +199,7 @@ transformation:
           node2_type || ':' || node2_id AS ":END_ID",
           node2_type AS node2_type,
           edge_type AS ":TYPE",
-          unique_edge_count AS pmcount
+          unique_edge_count AS "pmcount:int"
       FROM edges_grouped
     output: "data/exports/edges.csv.gz"
 
@@ -213,8 +213,8 @@ knowledge_graph:
   database_name: "drugrepurposing"
 
 
-ml_input_dir: "data/processed/ml_input"
+#ml_input_dir: "data/processed/ml_input"
+#seed: 0
+#k: 15
 
-seed: 0
-
-k: 15
+data_dir: "data/processed/ml_input"

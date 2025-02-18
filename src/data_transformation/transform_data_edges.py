@@ -66,17 +66,17 @@ def main(cli_args=None):
     try:
         cursor = connection.cursor()
         # First, perform the grouping operation.
-        group_edges(cursor, grouping_config)
+        #group_edges(cursor, grouping_config)
 
         # For edges, we want to explicitly define headers (since our query does not provide them).
-        headers = [":START_ID", "node1_type", ":END_ID", "node2_type", ":TYPE", "pmcount:int"]
+        #headers = [":START_ID", "node1_type", ":END_ID", "node2_type", ":TYPE", "pmcount:int"]
 
         # Use the generalized export function for the grouped edges.
         export_table_to_csv(
             connection=connection,
             query=export_query,
             output_path=output_path,
-            headers=headers,   # Provide headers explicitly for edges
+            #headers=headers,   # Provide headers explicitly for edges
             row_transform=None # No additional row transformation needed
         )
         connection.commit()

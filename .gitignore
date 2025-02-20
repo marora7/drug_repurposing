@@ -29,13 +29,16 @@ data/raw/
 data/exports/
 
 # Ml models
-ckpts/
+
+ckpts/TransE_l2_drug_repurposing_12/drug_repurposing_TransE_l2_entity.npy  
 *.npy
+*.deb
+
 
 # (Optional) If you have output datasets not meant for source control:
 datasets/*
 
-# IDEs and editor settings
+# IDEs and editor settings 
 .vscode/
 .idea/
 

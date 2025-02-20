@@ -28,6 +28,10 @@ data/processed/
 data/raw/
 data/exports/
 
+# Ml models
+ckpts/
+*.npy
+
 # (Optional) If you have output datasets not meant for source control:
 datasets/*
 

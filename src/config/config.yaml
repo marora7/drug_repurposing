@@ -218,3 +218,24 @@ knowledge_graph:
 #k: 15
 
 data_dir: "data/processed/ml_input"
+
+# Path to the nodes CSV file (gzipped)
+nodes_file: "data/exports/nodes.csv.gz"
+
+# Path to the edges CSV file (gzipped)
+edges_file: "data/exports/edges.csv.gz"
+
+# Directory where the output files (train.tsv, test.tsv, val.tsv) will be saved
+output_dir: "data/processed/train"
+
+# Path to the training TSV file
+train_file: "data/processed/train/train.tsv"
+
+# Path to the saved entity embeddings (.npy file)
+entity_embedding_path: "ckpts/TransE_l2_drug_repurposing_14/drug_repurposing_TransE_l2_entity.npy"
+
+# Path to the saved relation embeddings (.npy file)
+relation_embedding_path: "ckpts/TransE_l2_drug_repurposing_14/drug_repurposing_TransE_l2_relation.npy"
+
+# (Optional) Number of tail predictions to return for each relation
+#top_k: 10

@@ -27,9 +27,9 @@ dist/
 data/processed/
 data/raw/
 data/exports/
+metabase/
 
 # Ml models
-
 ckpts/TransE_l2_drug_repurposing_12/drug_repurposing_TransE_l2_entity.npy  
 *.npy
 *.deb

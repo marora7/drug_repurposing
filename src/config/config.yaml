@@ -239,3 +239,23 @@ relation_embedding_path: "ckpts/TransE_l2_drug_repurposing_14/drug_repurposing_T
 
 # (Optional) Number of tail predictions to return for each relation
 #top_k: 10
+
+ml_model:
+  query: >
+      SELECT 
+          '' AS distance,
+          n."Id:ID" AS drug_id,
+          n.name AS drug_name,
+          disease."Id:ID" AS disease_id,
+          disease.name AS disease_name,
+          e.":TYPE" AS relation,
+          e."pmcount:int" AS pmid,
+          CASE WHEN e.":TYPE" = 'treat' THEN TRUE ELSE FALSE END AS drug_to_disease
+      FROM edges e
+      JOIN nodes n 
+        ON e.":START_ID" = n."Id:ID" AND n.":LABEL" = 'Chemical'
+      JOIN nodes disease 
+        ON e.":END_ID" = disease."Id:ID" AND disease.":LABEL" = 'Disease';
+  output:
+    db_path: "data/processed/pubtator.db"
+    table_name: "treat_relations"

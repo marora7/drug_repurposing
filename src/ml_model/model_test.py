@@ -1,28 +1,27 @@
 """
-Link Prediction Script:
-This script loads pre-trained TransE embeddings along with entity and relation data,
-and performs link prediction for one or more head and tail entity pairs.
-For each relation, it computes the predicted tail embedding as:
-    head_embedding + relation_embedding,
-and then calculates the L2 distance to the given tail embedding.
-A positive score is computed as:
-    score = 1 / (distance + epsilon)
-so that a smaller distance yields a higher score.
-The relations are sorted in descending order by score, and the top_k relations are returned.
-Configuration parameters (file paths, top_k, etc.) are read from config.yaml.
+Modified Link Prediction Script for Drug Repurposing:
+
+This script performs two main tasks for each input disease:
+1. Generates a benchmark set of drug–disease pairs from the existing "treat" relationships.
+2. Generates a candidate set of drug–disease pairs by pairing every chemical (drug) with the disease,
+   excluding those that already have a "treat" relationship.
+For each pair, it computes the predicted distance as:
+    distance = || (drug_embedding + treat_embedding) - disease_embedding ||
+Benchmark rows keep the relation as "treat" while candidate rows are labeled as "predicted_treat".
+Finally, the combined results are written to the SQLite table specified in the configuration.
 """
 
 import os
 import numpy as np
 import argparse
 import pandas as pd
-import csv
 import torch
+import sqlite3
 from src.utils.config_utils import load_config
 
 def load_embeddings(entity_path, relation_path, device):
     """
-    Loads the entity and relation embedding matrices from .npy files,
+    Loads entity and relation embeddings from .npy files,
     converts them to PyTorch tensors, and moves them to the specified device.
     """
     if not os.path.exists(entity_path):
@@ -34,158 +33,223 @@ def load_embeddings(entity_path, relation_path, device):
     relation_embeddings = torch.from_numpy(np.load(relation_path)).float().to(device)
     return entity_embeddings, relation_embeddings
 
-def load_ordered_entities(nodes_file):
+def load_ml_model_df(nodes_csv, edges_csv, ml_query):
     """
-    Loads entities from the nodes CSV (or CSV.GZ) file and creates an ordered list.
-    Assumes the CSV has columns 'Id:ID' and ':LABEL' and that the training entity string was
-    generated as "<:LABEL>::<Id:ID>".
+    Loads nodes and edges CSV files (with optional gzip compression),
+    creates an in-memory SQLite database, and executes the ml_model SQL query.
+    Returns the resulting DataFrame.
     """
-    compression = 'gzip' if nodes_file.endswith('.gz') else None
-    df = pd.read_csv(nodes_file, compression=compression)
-    entity_list = [f"{row[':LABEL']}::{row['Id:ID']}" for _, row in df.iterrows()]
-    return entity_list
+    comp_nodes = 'gzip' if nodes_csv.endswith('.gz') else None
+    comp_edges = 'gzip' if edges_csv.endswith('.gz') else None
 
-def load_ordered_relations(train_file):
+    nodes_df = pd.read_csv(nodes_csv, compression=comp_nodes)
+    edges_df = pd.read_csv(edges_csv, compression=comp_edges)
+    
+    conn = sqlite3.connect(":memory:")
+    nodes_df.to_sql("nodes", conn, index=False, if_exists="replace")
+    edges_df.to_sql("edges", conn, index=False, if_exists="replace")
+    ml_model_df = pd.read_sql_query(ml_query, conn)
+    conn.close()
+    return ml_model_df
+
+def load_entity_mapping(nodes_csv):
     """
-    Reads the training TSV file (assumed columns: head, relation, tail, score) and returns
-    an ordered list of unique relation strings (in the order they first appear).
+    Loads the nodes CSV file and creates a mapping from "Id:ID" to its row index.
+    Assumes that the ordering in the CSV corresponds to the ordering of the entity embeddings.
+    """
+    comp = 'gzip' if nodes_csv.endswith('.gz') else None
+    df = pd.read_csv(nodes_csv, compression=comp)
+    mapping = {row["Id:ID"]: i for i, row in df.iterrows()}
+    return mapping
+
+def load_relation_mapping(train_file):
+    """
+    Reads the training TSV file and returns a dictionary mapping each unique relation
+    (based on its first appearance) to an index.
     """
     relations = []
     seen = set()
     with open(train_file, "r") as f:
-        reader = csv.reader(f, delimiter="\t")
-        for row in reader:
-            if len(row) < 3:
+        for line in f:
+            parts = line.strip().split("\t")
+            if len(parts) < 3:
                 continue
-            relation = row[1]
+            relation = parts[1]
             if relation not in seen:
                 seen.add(relation)
                 relations.append(relation)
-    return relations
+    mapping = {rel: idx for idx, rel in enumerate(relations)}
+    return mapping
 
-def predict_relations(head_idx, tail_idx, entity_emb, relation_emb, top_k=10):
+def generate_benchmark_predictions(disease, ml_model_df, entity_mapping, entity_emb, relation_mapping, relation_emb):
     """
-    Given a head and tail entity index, computes a score for each relation using:
-        score = 1 / (|| (head_embedding + relation_embedding) - tail_embedding || + epsilon)
-    (i.e. a positive score where higher is better).
-    The function sorts the scores in descending order and returns the indices of the top_k relations,
-    along with the full score array.
+    Generates the benchmark set by filtering ml_model_df for rows where:
+      - disease_name matches the input disease, and
+      - an existing "treat" relationship exists (drug_to_disease == True).
+    For each pair, computes the distance using the treat embedding.
     """
-    head_vec = entity_emb[head_idx]   # shape: (d,)
-    tail_vec = entity_emb[tail_idx]   # shape: (d,)
-    # Compute predicted tail embeddings for all relations (broadcast addition)
-    predicted = head_vec + relation_emb  # shape: (num_relations, d)
-    differences = predicted - tail_vec   # shape: (num_relations, d)
-    distances = torch.norm(differences, dim=1)  # L2 distances for all relations
-    epsilon = 1e-8
-    scores = 1.0 / (distances + epsilon)  # higher score for smaller distance
-    # Sort by descending score and filter top_k after sorting
-    sorted_indices = torch.argsort(scores, descending=True)
-    top_indices = sorted_indices[:top_k]
-    # Convert to numpy arrays for further processing/printing
-    scores = scores.cpu().numpy()
-    top_indices = top_indices.cpu().numpy()
-    return top_indices, scores
-
-def print_predictions(head_entity, tail_entity, relation_list, top_relation_indices, scores):
-    """
-    Prints the prediction results in a table format using Pandas.
-    """
+    # Use case-insensitive matching for disease
+    df_bench = ml_model_df[ml_model_df['disease_name'].str.lower() == disease.lower()]
+    df_bench = df_bench[df_bench['drug_to_disease'] == True]
     results = []
-    for rank, rel_idx in enumerate(top_relation_indices, start=1):
-        relation = relation_list[rel_idx]
-        score = scores[rel_idx]  # positive score where higher is better
+    for _, row in df_bench.iterrows():
+        drug_id = row["drug_id"]
+        dis_id = row["disease_id"]
+        if drug_id not in entity_mapping or dis_id not in entity_mapping:
+            continue
+        drug_idx = entity_mapping[drug_id]
+        dis_idx = entity_mapping[dis_id]
+        drug_vec = entity_emb[drug_idx]
+        dis_vec = entity_emb[dis_idx]
+        # Use the treat relation embedding from the training mapping
+        if "treat" in relation_mapping:
+            rel_idx = relation_mapping["treat"]
+            rel_vec = relation_emb[rel_idx]
+        else:
+            rel_vec = torch.zeros_like(drug_vec)
+        predicted_tail = drug_vec + rel_vec
+        distance = torch.norm(predicted_tail - dis_vec).item()
         results.append({
-            "Rank": rank,
-            "Head Entity": head_entity,
-            "Tail Entity": tail_entity,
-            "Predicted Relation": relation,
-            "Score": f"{score:.4f}"
+            "disease": disease,
+            "drug_id": drug_id,
+            "drug_name": row["drug_name"],
+            "disease_id": dis_id,
+            "disease_name": row["disease_name"],
+            "relation": "treat",
+            "pmid": row["pmid"],
+            "drug_to_disease": True,
+            "distance": distance
         })
-    
-    df = pd.DataFrame(results)
-    print("\nPredictions:")
-    print(df.to_string(index=False))
+    return pd.DataFrame(results)
 
-def parse_entities(entity_string):
+def generate_candidate_predictions(disease, nodes_csv, benchmark_drug_ids, entity_mapping, entity_emb, relation_mapping, relation_emb):
     """
-    Parses a comma-separated string of entities into a list.
-    If no comma is found, returns a list with a single entity.
+    Generates candidate drug–disease pairs by taking all chemicals (from nodes CSV)
+    and pairing them with the given disease, excluding those drugs already present in benchmark_drug_ids.
+    For each candidate pair, computes the predicted distance using the treat embedding.
+    Labels the relation as "predicted_treat" and sets drug_to_disease to False.
     """
-    if "," in entity_string:
-        return [e.strip() for e in entity_string.split(",")]
-    else:
-        return [entity_string.strip()]
+    comp = 'gzip' if nodes_csv.endswith('.gz') else None
+    nodes_df = pd.read_csv(nodes_csv, compression=comp)
+    # Filter for chemicals
+    chem_df = nodes_df[nodes_df[":LABEL"] == "Chemical"]
+    # Get the disease row (assumes disease name matching on 'name' column, case-insensitive)
+    disease_df = nodes_df[(nodes_df[":LABEL"] == "Disease") & (nodes_df["name"].str.lower() == disease.lower())]
+    if disease_df.empty:
+        print(f"No disease found for {disease}")
+        return pd.DataFrame()
+    disease_row = disease_df.iloc[0]
+    disease_id = disease_row["Id:ID"]
+    disease_name = disease_row["name"]
+
+    results = []
+    for _, row in chem_df.iterrows():
+        drug_id = row["Id:ID"]
+        # Skip drugs already in the benchmark for this disease
+        if drug_id in benchmark_drug_ids:
+            continue
+        if drug_id not in entity_mapping or disease_id not in entity_mapping:
+            continue
+        drug_idx = entity_mapping[drug_id]
+        dis_idx = entity_mapping[disease_id]
+        drug_vec = entity_emb[drug_idx]
+        dis_vec = entity_emb[dis_idx]
+        if "treat" in relation_mapping:
+            rel_idx = relation_mapping["treat"]
+            rel_vec = relation_emb[rel_idx]
+        else:
+            rel_vec = torch.zeros_like(drug_vec)
+        predicted_tail = drug_vec + rel_vec
+        distance = torch.norm(predicted_tail - dis_vec).item()
+        results.append({
+            "disease": disease,
+            "drug_id": drug_id,
+            "drug_name": row["name"],
+            "disease_id": disease_id,
+            "disease_name": disease_name,
+            "relation": "predicted_treat",
+            "pmid": 0,  # No pmid for candidate predictions
+            "drug_to_disease": False,
+            "distance": distance
+        })
+    return pd.DataFrame(results)
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Link prediction for one or more head and tail entity pairs using config.yaml"
+        description="Link prediction for drug repurposing using benchmark and candidate generation."
     )
-    parser.add_argument("head_entities", type=str,
-                        help="Comma-separated list of head entity strings (e.g., 'Chemical::DRUG123,Chemical::DRUG456')")
-    parser.add_argument("tail_entities", type=str,
-                        help="Comma-separated list of tail entity strings (e.g., 'Disease::DISEASE456,Disease::DISEASE789')")
+    parser.add_argument("disease_names", type=str,
+                        help="Comma-separated list of disease names (e.g., 'Diabetes,Hypertension')")
     args = parser.parse_args()
     
-    # Parse the provided entity strings into lists
-    head_list = parse_entities(args.head_entities)
-    tail_list = parse_entities(args.tail_entities)
-    
-    # If one list is length 1 and the other is longer, replicate the single entity accordingly
-    if len(head_list) == 1 and len(tail_list) > 1:
-        head_list = head_list * len(tail_list)
-    elif len(tail_list) == 1 and len(head_list) > 1:
-        tail_list = tail_list * len(head_list)
-    elif len(head_list) != len(tail_list):
-        print("Error: When providing multiple entities, the number of head and tail entities must match (or one of them must be a single value).")
-        return
-    
-    # Determine the path to config.yaml relative to this file (assumes config.yaml is in the project root)
+    # Determine the path to config.yaml relative to this file (assumes config.yaml is in project_root/config/)
     CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config', 'config.yaml')
     config = load_config(CONFIG_PATH)
     
-    # Extract parameters from the configuration
-    nodes_file = config["nodes_file"]
+    # Extract configuration parameters
+    nodes_file = config["transformation"]["nodes"]["output"]   # e.g., data/exports/nodes.csv.gz
+    edges_file = config["transformation"]["edges"]["output"]     # e.g., data/exports/edges.csv.gz
+    ml_query = config["ml_model"]["query"]
     train_file = config["train_file"]
     entity_embedding_path = config["entity_embedding_path"]
     relation_embedding_path = config["relation_embedding_path"]
-    top_k = config.get("top_k", 10)
+    # Output info now resides under ml_model.output in the YAML
+    output_db_path = config["ml_model"]["output"]["db_path"]
+    output_table = config["ml_model"]["output"]["table_name"]
     
-    # Set up the device: use CUDA if available, else CPU
+    # Set up device (CUDA if available, else CPU)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # Load embeddings and move them to the selected device
+    # Load embeddings
     print("Loading embeddings...")
     entity_emb, relation_emb = load_embeddings(entity_embedding_path, relation_embedding_path, device)
     
-    # Load ordered entity list from nodes file
-    print("Loading entities from nodes file...")
-    entity_list = load_ordered_entities(nodes_file)
+    # Load the ml_model DataFrame (for benchmark extraction)
+    print("Loading ml_model DataFrame using SQL query...")
+    ml_model_df = load_ml_model_df(nodes_file, edges_file, ml_query)
     
-    # Load ordered relation list from training file
-    print("Extracting relations from training file...")
-    relation_list = load_ordered_relations(train_file)
+    # Create entity and relation mappings
+    print("Loading entity mapping...")
+    entity_mapping = load_entity_mapping(nodes_file)
+    print("Loading relation mapping...")
+    relation_mapping = load_relation_mapping(train_file)
     
-    # Process each head-tail pair
-    for head_entity, tail_entity in zip(head_list, tail_list):
-        try:
-            head_idx = entity_list.index(head_entity)
-        except ValueError:
-            print(f"Head entity '{head_entity}' not found in nodes file. Skipping this pair.")
-            continue
-        try:
-            tail_idx = entity_list.index(tail_entity)
-        except ValueError:
-            print(f"Tail entity '{tail_entity}' not found in nodes file. Skipping this pair.")
-            continue
-
-        print(f"\nRunning link prediction for head entity '{head_entity}' and tail entity '{tail_entity}'...\n")
-        # Predict and rank relations based on the positive score (descending order)
-        top_relation_indices, scores = predict_relations(head_idx, tail_idx, entity_emb, relation_emb, top_k=top_k)
-        # Display the results with header "Score"
-        print_predictions(head_entity, tail_entity, relation_list, top_relation_indices, scores)
-        print("-" * 40)
+    all_results = []
+    # Process each disease in the input (comma-separated)
+    diseases = [d.strip() for d in args.disease_names.split(",")]
+    for disease in diseases:
+        print(f"\nProcessing disease: {disease}")
+        # Generate benchmark predictions from existing "treat" relationships
+        benchmark_df = generate_benchmark_predictions(disease, ml_model_df, entity_mapping, entity_emb, relation_mapping, relation_emb)
+        # Extract drug IDs from benchmark to exclude them from candidates
+        benchmark_drug_ids = set(benchmark_df["drug_id"].tolist())
+        # Generate candidate predictions by pairing all chemicals with the disease (excluding benchmark drugs)
+        candidate_df = generate_candidate_predictions(disease, nodes_file, benchmark_drug_ids, entity_mapping, entity_emb, relation_mapping, relation_emb)
+        # Combine benchmark and candidate predictions
+        disease_results = pd.concat([benchmark_df, candidate_df], ignore_index=True)
+        all_results.append(disease_results)
+    
+    # Combine results for all diseases
+    if all_results:
+        results_df = pd.concat(all_results, ignore_index=True)
+    else:
+        results_df = pd.DataFrame()
+    
+    if results_df.empty:
+        print("No prediction results found.")
+    else:
+        print("\nCombined Prediction Results:")
+        print(results_df.to_string(index=False))
+    
+    # Write the complete results into the output SQLite table
+    print(f"\nWriting results into SQLite database table '{output_table}' at '{output_db_path}'...")
+    conn = sqlite3.connect(output_db_path)
+    results_df.to_sql(output_table, conn, if_exists="replace", index=False)
+    conn.commit()
+    conn.close()
+    print("Results written successfully.")
 
 if __name__ == "__main__":
     main()
+

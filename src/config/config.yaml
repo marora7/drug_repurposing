@@ -217,7 +217,7 @@ knowledge_graph:
 #seed: 0
 #k: 15
 
-data_dir: "data/processed/ml_input"
+data_dir: "data/processed/train"
 
 # Path to the nodes CSV file (gzipped)
 nodes_file: "data/exports/nodes.csv.gz"
@@ -228,8 +228,10 @@ edges_file: "data/exports/edges.csv.gz"
 # Directory where the output files (train.tsv, test.tsv, val.tsv) will be saved
 output_dir: "data/processed/train"
 
-# Path to the training TSV file
-train_file: "data/processed/train/train.tsv"
+# Path to the training, entities and relations TSV file
+train_file: "train.tsv"
+entities_file: "entities.tsv"
+relations_file: "relations.tsv"
 
 # Path to the saved entity embeddings (.npy file)
 entity_embedding_path: "ckpts/TransE_l2_drug_repurposing_14/drug_repurposing_TransE_l2_entity.npy"
@@ -256,6 +258,13 @@ ml_model:
         ON e.":START_ID" = n."Id:ID" AND n.":LABEL" = 'Chemical'
       JOIN nodes disease 
         ON e.":END_ID" = disease."Id:ID" AND disease.":LABEL" = 'Disease';
-  output:
-    db_path: "data/processed/pubtator.db"
-    table_name: "treat_relations"
+  
+  db_path: "data/processed/pubtator.db"
+  table_name: "treat_relations"
+
+# Orchestrator settings
+orchestrator:
+  processes: 4             # Number of parallel processes to use
+  batch_size: 100          # Number of diseases per batch
+  logging_path: "logs/"    # Directory for log files
+  checkpoint_db: "data/processed/orchestrator_status.db"  # Database for tracking progress

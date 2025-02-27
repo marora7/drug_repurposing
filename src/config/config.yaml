@@ -261,10 +261,61 @@ ml_model:
   
   db_path: "data/processed/pubtator.db"
   table_name: "treat_relations"
+  top_k: 100  # Number of top predictions to return per disease
+  progress_tracking_db: "data/processed/prediction_progress.db"  # Path to track processing progress
 
-# Orchestrator settings
-orchestrator:
-  processes: 4             # Number of parallel processes to use
-  batch_size: 100          # Number of diseases per batch
-  logging_path: "logs/"    # Directory for log files
-  checkpoint_db: "data/processed/orchestrator_status.db"  # Database for tracking progress
+# Database SQL queries
+sql_queries:
+  # Table creation queries
+  create_completed_diseases_table: |
+    CREATE TABLE IF NOT EXISTS completed_diseases (
+        disease_id TEXT PRIMARY KEY,
+        timestamp TEXT,
+        status TEXT,
+        error_message TEXT
+    )
+
+  create_batches_table: |
+    CREATE TABLE IF NOT EXISTS batches (
+        batch_id INTEGER PRIMARY KEY,
+        start_time TEXT,
+        end_time TEXT,
+        status TEXT,
+        num_diseases INTEGER
+    )
+
+  # Data retrieval queries
+  get_completed_diseases: |
+    SELECT disease_id FROM completed_diseases WHERE status = 'completed'
+
+  # Data insertion and update queries
+  mark_disease_completed: |
+    INSERT OR REPLACE INTO completed_diseases
+    (disease_id, timestamp, status, error_message)
+    VALUES (?, ?, ?, ?)
+
+  record_batch_start: |
+    INSERT INTO batches
+    (batch_id, start_time, status, num_diseases)
+    VALUES (?, ?, ?, ?)
+
+  record_batch_end: |
+    UPDATE batches
+    SET end_time = ?, status = ?
+    WHERE batch_id = ?
+
+# Model configuration
+model:
+  checkpoint_frequency: 10  # Save checkpoints after every 10 batches
+
+# Processing configuration
+processing:
+  default_batch_size: 100
+  default_num_workers: 4
+  timeout_seconds: 3600  # 1 hour timeout per disease
+  max_retries: 2  # Number of times to retry a failed disease
+
+# Output configuration
+output:
+  log_level: INFO
+  detailed_logging: true

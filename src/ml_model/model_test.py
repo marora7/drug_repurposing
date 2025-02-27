@@ -5,6 +5,8 @@ and stores results in a SQLite database using configuration from YAML file.
 """
 
 import os
+import sys
+
 import numpy as np
 import argparse
 import pandas as pd
@@ -15,74 +17,18 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Set
 import time
 from collections import defaultdict
-import yaml
 
-def load_config(config_path: str) -> Dict:
-    """
-    Config loader from YAML.
-    """
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+# Add the project root to the Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-def load_embeddings(entity_path: str, relation_path: str) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Loads the entity and relation embedding matrices from .npy files.
-    """
-    if not os.path.exists(entity_path):
-        raise FileNotFoundError(f"Entity embedding file not found: {entity_path}")
-    if not os.path.exists(relation_path):
-        raise FileNotFoundError(f"Relation embedding file not found: {relation_path}")
-    
-    print(f"Loading entity embeddings from {entity_path}")
-    entity_embeddings = np.load(entity_path)
-    print(f"Loading relation embeddings from {relation_path}")
-    relation_embeddings = np.load(relation_path)
-    return entity_embeddings, relation_embeddings
-
-def load_entities(entities_file: str) -> Tuple[List[str], Dict[str, int]]:
-    """
-    Loads entities from the entities.tsv file and creates an ordered list and a lookup dictionary.
-    """
-    entities = []
-    entity_to_idx = {}
-    
-    print(f"Loading entities from {entities_file}")
-    with open(entities_file, 'r') as f:
-        reader = csv.reader(f, delimiter='\t')
-        for row in reader:
-            if len(row) < 2:
-                continue
-            idx, entity = row[0], row[1]
-            entities.append(entity)
-            entity_to_idx[entity] = int(idx)
-    
-    print(f"Loaded {len(entities)} entities")
-    return entities, entity_to_idx
-
-def load_relations(relations_file: str) -> Tuple[List[str], Dict[str, int]]:
-    """
-    Loads relations from the relations.tsv file and creates an ordered list and a lookup dictionary.
-    """
-    relations = []
-    relation_to_idx = {}
-    
-    print(f"Loading relations from {relations_file}")
-    with open(relations_file, 'r') as f:
-        reader = csv.reader(f, delimiter='\t')
-        for row in reader:
-            if len(row) < 2:
-                continue
-            idx, relation = row[0], row[1]
-            relations.append(relation)
-            relation_to_idx[relation] = int(idx)
-    
-    print(f"Loaded {len(relations)} relations")
-    return relations, relation_to_idx
+from src.utils.config_utils import load_config
+from src.utils.data_utils import load_tsv_mappings, load_embeddings
+from src.utils.db_utils import setup_sqlite_table
 
 def load_known_treatment_triples(train_file: str, disease_entities: List[str], 
                                  treat_relations: List[str]) -> Dict[Tuple[str, str], Set[str]]:
     """
-    Efficiently loads only the treatment triples relevant to the specified diseases.
+    Loads only the treatment triples relevant to the specified diseases.
     Returns a dictionary mapping (disease, relation) pairs to sets of known treatment chemicals.
     """
     known_treatments = defaultdict(set)
@@ -197,63 +143,11 @@ def batch_compute_distances_inverse_direction(tail_idx: int, relation_idx: int,
     
     return distances
 
-def setup_sqlite_db(db_path: str, table_name: str) -> None:
-    """
-    Creates a SQLite database and table if they don't exist.
-    """
-    # Ensure the directory exists
-    db_dir = os.path.dirname(db_path)
-    if db_dir and not os.path.exists(db_dir):
-        os.makedirs(db_dir)
-    
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    # Create the table if it doesn't exist
-    # Use the table name exactly as specified in config
-    try:
-        cursor.execute(f"""
-        CREATE TABLE IF NOT EXISTS "{table_name}" (
-            disease TEXT,
-            drug TEXT,
-            relation TEXT,
-            distance REAL,
-            status TEXT,
-            source_disease TEXT,
-            PRIMARY KEY (disease, drug, relation, source_disease)
-        )
-        """)
-        
-        conn.commit()
-        print(f"Successfully setup table '{table_name}' in database '{db_path}'")
-    except sqlite3.Error as e:
-        print(f"SQLite error: {e}")
-        print("Attempting fallback with sanitized table name...")
-        
-        # Fallback to sanitized name if there's an error
-        sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name)
-        cursor.execute(f"""
-        CREATE TABLE IF NOT EXISTS {sanitized_name} (
-            disease TEXT,
-            drug TEXT,
-            relation TEXT,
-            distance REAL,
-            status TEXT,
-            source_disease TEXT,
-            PRIMARY KEY (disease, drug, relation, source_disease)
-        )
-        """)
-        conn.commit()
-        print(f"Created table with sanitized name '{sanitized_name}'")
-        table_name = sanitized_name
-    
-    conn.close()
-    return table_name
-
 def main():
     start_time = time.time()
+
     parser = argparse.ArgumentParser(
-        description="Direction-aware drug repurposing link prediction for diseases"
+        description="Drug repurposing link prediction for diseases"
     )
     parser.add_argument("disease_name", type=str,
                         help="Input disease name (e.g., 'diabetes')")
@@ -277,31 +171,29 @@ def main():
     top_k = args.top_k
     batch_size = args.batch_size
     
+    # Get table name from the ml_model section of config
+    table_name = config.get("ml_model", {}).get("table_name")
+
     # Database settings from config file
-    db_path = config.get("db_path")
-    if not db_path and "ml_model" in config and "db_path" in config["ml_model"]:
-        db_path = config["ml_model"]["db_path"]
+    db_path = config.get("ml_model", {}).get("db_path")
     
-    table_name = config.get("table_name")
-    if not table_name and "ml_model" in config and "table_name" in config["ml_model"]:
-        table_name = config["ml_model"]["table_name"]
+    # Define the table schema
+    schema = {
+        'disease': 'TEXT',
+        'drug': 'TEXT', 
+        'relation': 'TEXT',
+        'distance': 'REAL',
+        'status': 'TEXT',
+        'source_disease': 'TEXT'
+    }
     
-    # Fallback to defaults if still not found
-    if not db_path:
-        db_path = "drug_repurposing_results.db"
-        print(f"Warning: No db_path found in config, using default: {db_path}")
+    # Set up the table in the existing SQLite database
+    setup_sqlite_table(db_path, table_name, schema, "disease, drug, relation, source_disease")
     
-    if not table_name:
-        table_name = "repurposing_predictions"
-        print(f"Warning: No table_name found in config, using default: {table_name}")
-    
-    # Set up the SQLite database
-    setup_sqlite_db(db_path, table_name)
-    
-    # Load entities and relations first (smaller files)
+    # Load entities and relations using the imported load_tsv_mappings function
     print("Loading entities and relations...")
-    entities, entity_to_idx = load_entities(entities_file)
-    relations, relation_to_idx = load_relations(relations_file)
+    entities, entity_to_idx = load_tsv_mappings(entities_file, "entities")
+    relations, relation_to_idx = load_tsv_mappings(relations_file, "relations")
     
     # Find disease entities matching the input name
     disease_entities = find_disease_entity(args.disease_name, entities)
@@ -337,9 +229,11 @@ def main():
     chemical_indices = filter_chemical_entities(entities)
     print(f"Found {len(chemical_indices)} chemical entities")
     
-    # Load embeddings (potentially large files)
+    # Load embeddings using the imported load_embeddings function
     print("Loading embeddings...")
-    entity_emb, relation_emb = load_embeddings(entity_embedding_path, relation_embedding_path)
+    embedding_paths = [entity_embedding_path, relation_embedding_path]
+    embedding_names = ["entity", "relation"]
+    entity_emb, relation_emb = load_embeddings(embedding_paths, embedding_names)
     
     # For each disease entity and treatment relation, predict potential drugs
     all_predictions = []
@@ -409,14 +303,11 @@ def main():
     print(f"\nWriting results into SQLite database table '{table_name}' at '{db_path}'...")
     conn = sqlite3.connect(db_path)
     try:
-        results_df.to_sql(table_name, conn, if_exists="replace", index=False)
+        results_df.to_sql(table_name, conn, if_exists="append", index=False)
         print("Results written successfully.")
     except sqlite3.Error as e:
         print(f"SQLite error: {e}")
-        print("Attempting to write with sanitized table name...")
-        sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name)
-        results_df.to_sql(sanitized_name, conn, if_exists="replace", index=False)
-        print(f"Results written to sanitized table name '{sanitized_name}'")
+        raise
     finally:
         conn.commit()
         conn.close()

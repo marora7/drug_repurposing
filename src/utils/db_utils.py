@@ -1,10 +1,12 @@
 """
 Utility functions for performing SQLite database operations.
 """
-
+import os
 import sqlite3
 import logging
 import pandas as pd
+from typing import Optional, Dict, Any
+from datetime import datetime
 
 def setup_database(db_path, table_queries):
     """
@@ -14,27 +16,6 @@ def setup_database(db_path, table_queries):
         db_path (str): Path to the SQLite database file.
         table_queries (dict): A dictionary mapping table names to their corresponding
                               CREATE TABLE SQL statements.
-    
-    Example:
-        table_queries = {
-            "diseases": (
-                "CREATE TABLE IF NOT EXISTS diseases ("
-                "   entity_id TEXT, "
-                "   entity_type TEXT, "
-                "   entity_label TEXT, "
-                "   entity_name TEXT, "
-                "   source TEXT"
-                ")"
-            ),
-            "relations": (
-                "CREATE TABLE IF NOT EXISTS relations ("
-                "   id TEXT, "
-                "   entity_relation TEXT, "        
-                "   entity1 TEXT, "
-                "   entity2 TEXT"
-                ")"
-            )
-        }
 
     Returns:
         None
@@ -148,3 +129,218 @@ def create_table(connection, create_query):
     except Exception as e:
         logging.error(f"Error creating table: {e}")
         raise
+
+def setup_sqlite_table(db_path: str, table_name: str, schema: Dict[str, str], 
+                       primary_key: Optional[str] = None) -> None:
+    """
+    Creates a table in an existing SQLite database if it doesn't exist.
+    
+    Args:
+        db_path (str): Path to the SQLite database file
+        table_name (str): Name of the table to create
+        schema (Dict[str, str]): Dictionary mapping column names to their SQLite data types
+        primary_key (Optional[str]): Primary key definition, can be a column name or a composite key definition
+    
+    Returns:
+        None
+    """
+    # Ensure the directory exists
+    db_dir = os.path.dirname(db_path)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir)
+    
+    # Construct the CREATE TABLE statement
+    column_defs = [f'"{col}" {dtype}' for col, dtype in schema.items()]
+    
+    if primary_key:
+        column_defs.append(f"PRIMARY KEY ({primary_key})")
+    
+    create_table_sql = f"""
+    CREATE TABLE IF NOT EXISTS "{table_name}" (
+        {', '.join(column_defs)}
+    )
+    """
+    
+    # Connect to the database and create the table
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(create_table_sql)
+        conn.commit()
+        logging.info(f"Successfully set up table '{table_name}' in database '{db_path}'")
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error: {e}")
+        raise
+    finally:
+        conn.close()
+
+def init_database(db_path, config):
+    """
+    Initializes the database for tracking prediction progress.
+    
+    Parameters:
+        db_path (str): Path to the SQLite database file.
+        config (dict): Configuration containing SQL queries for table creation.
+        
+    Returns:
+        None
+    """
+    # Ensure the directory exists
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    
+    # Get SQL queries from config
+    create_completed_diseases_sql = config.get('sql_queries', {}).get(
+        'create_completed_diseases_table',
+        """
+        CREATE TABLE IF NOT EXISTS completed_diseases (
+            disease_id TEXT PRIMARY KEY,
+            timestamp TEXT,
+            status TEXT,
+            error_message TEXT
+        )
+        """
+    )
+    
+    create_batches_sql = config.get('sql_queries', {}).get(
+        'create_batches_table',
+        """
+        CREATE TABLE IF NOT EXISTS batches (
+            batch_id INTEGER PRIMARY KEY,
+            start_time TEXT,
+            end_time TEXT,
+            status TEXT,
+            num_diseases INTEGER
+        )
+        """
+    )
+    
+    # Connect to database and create tables
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Create completed_diseases table
+        cursor.execute(create_completed_diseases_sql)
+        
+        # Create batches table
+        cursor.execute(create_batches_sql)
+        
+        conn.commit()
+        conn.close()
+        logging.info(f"Database initialized at {db_path}")
+    except sqlite3.Error as e:
+        logging.error(f"Database initialization failed: {e}")
+        raise
+
+def get_completed_diseases(db_path, config):
+    """
+    Gets a list of disease IDs that have already been successfully processed.
+    
+    Parameters:
+        db_path (str): Path to the SQLite database file.
+        config (dict): Configuration containing SQL queries.
+        
+    Returns:
+        list: List of completed disease IDs.
+    """
+    query = config.get('sql_queries', {}).get(
+        'get_completed_diseases',
+        "SELECT disease_id FROM completed_diseases WHERE status = 'completed'"
+    )
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(query)
+        results = cursor.fetchall()
+        conn.close()
+        
+        # Extract disease IDs from results
+        completed_diseases = [row[0] for row in results]
+        logging.info(f"Found {len(completed_diseases)} completed diseases")
+        return completed_diseases
+    except sqlite3.Error as e:
+        logging.error(f"Failed to get completed diseases: {e}")
+        return []
+
+def mark_disease_completed(db_path, disease_id, status, error_message, config):
+    """
+    Marks a disease as completed in the database.
+    
+    Parameters:
+        db_path (str): Path to the SQLite database file.
+        disease_id (str): ID of the disease that was processed.
+        status (str): Status of the processing ('completed', 'failed', etc.)
+        error_message (str): Error message if processing failed, None otherwise.
+        config (dict): Configuration containing SQL queries.
+        
+    Returns:
+        None
+    """
+    query = config.get('sql_queries', {}).get(
+        'mark_disease_completed',
+        """
+        INSERT OR REPLACE INTO completed_diseases
+        (disease_id, timestamp, status, error_message)
+        VALUES (?, ?, ?, ?)
+        """
+    )
+    
+    try:
+        timestamp = datetime.now().isoformat()
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(query, (disease_id, timestamp, status, error_message))
+        conn.commit()
+        conn.close()
+        logging.info(f"Disease {disease_id} marked as {status}")
+    except sqlite3.Error as e:
+        logging.error(f"Failed to mark disease {disease_id} as {status}: {e}")
+
+def record_batch(db_path, batch_id, num_diseases, status, end_time, config):
+    """
+    Records batch processing information in the database.
+    
+    Parameters:
+        db_path (str): Path to the SQLite database file.
+        batch_id (int): ID of the batch being processed.
+        num_diseases (int): Number of diseases in the batch.
+        status (str): Status of the batch ('started', 'completed', 'failed', etc.)
+        end_time (str): End time of batch processing (ISO format), None if just starting.
+        config (dict): Configuration containing SQL queries.
+        
+    Returns:
+        None
+    """
+    if status == 'started':
+        query = config.get('sql_queries', {}).get(
+            'record_batch_start',
+            """
+            INSERT INTO batches
+            (batch_id, start_time, status, num_diseases)
+            VALUES (?, ?, ?, ?)
+            """
+        )
+        start_time = datetime.now().isoformat()
+        params = (batch_id, start_time, status, num_diseases)
+    else:
+        query = config.get('sql_queries', {}).get(
+            'record_batch_end',
+            """
+            UPDATE batches
+            SET end_time = ?, status = ?
+            WHERE batch_id = ?
+            """
+        )
+        end_time = end_time or datetime.now().isoformat()
+        params = (end_time, status, batch_id)
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        conn.commit()
+        conn.close()
+        logging.info(f"Batch {batch_id} recorded with status {status}")
+    except sqlite3.Error as e:
+        logging.error(f"Failed to record batch {batch_id}: {e}")

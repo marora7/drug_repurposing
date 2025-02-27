@@ -1,25 +1,39 @@
 import sqlite3
-import pandas as pd
 
-#Path to your SQLite database
-db_path = "/mnt/f/datasets/pubtator.db"
+# Database location
+db_path = r"/mnt/f/drug_repurposing/data/processed/pubtator.db"
 
-# Connect to the database
-conn = sqlite3.connect(db_path)
+def check_and_delete_rows():
+    # Connect to the database
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    try:
+        # Check number of rows before deletion
+        cursor.execute("SELECT COUNT(*) FROM treat_relations")
+        initial_count = cursor.fetchone()[0]
+        print(f"Number of rows before deletion: {initial_count}")
+        
+        # Delete all rows from the table
+        cursor.execute("DELETE FROM treat_relations")
+        conn.commit()
+        print("All rows deleted successfully.")
+        
+        # Check if any rows remain after deletion
+        cursor.execute("SELECT COUNT(*) FROM treat_relations")
+        final_count = cursor.fetchone()[0]
+        print(f"Number of rows after deletion: {final_count}")
+        
+        if final_count == 0:
+            print("Verification successful: No rows remain in the table.")
+        else:
+            print(f"Warning: {final_count} rows still exist in the table.")
+            
+    except sqlite3.Error as e:
+        print(f"SQLite error occurred: {e}")
+    finally:
+        # Close the connection
+        conn.close()
 
-#nodes_df = pd.read_csv("data/exports/nodes.csv.gz", compression="gzip")
-#print(nodes_df.columns.tolist())
-
-query = "SELECT DISTINCT edge_type FROM edges_grouped;"
-edge_types_df = pd.read_sql_query(query, conn)
-print(edge_types_df)
-
-# Close the database connection
-conn.close()
-
-#import torch
-#print("CUDA available:", torch.cuda.is_available())
-#print("CUDA version (PyTorch):", torch.version.cuda)
-
-
-
+if __name__ == "__main__":
+    check_and_delete_rows()

@@ -11,9 +11,16 @@ import pandas as pd
 import gzip
 import logging
 import argparse
-from src.utils.config_utils import load_config
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+# Get the absolute path of the current script's directory
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# Get the project root directory (assuming the script is in src/data_postprocessing/)
+project_root = os.path.abspath(os.path.join(current_dir, '../..'))
+# Add the project root to sys.path
+sys.path.insert(0, project_root)
+
+# Now import from src
+from src.utils.config_utils import load_config
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -27,6 +34,8 @@ def create_relations_before_prediction_table(config_path):
     Args:
         config_path (str): Path to the configuration file
     """
+    import time
+    
     try:
         # Load configuration
         config = load_config(config_path)
@@ -41,34 +50,60 @@ def create_relations_before_prediction_table(config_path):
         insert_data_query = config['post_processing']['insert_relations_before_prediction']
         
         logger.info("Loading nodes data...")
+        start_time = time.time()
         # Load nodes data
         with gzip.open(nodes_path, 'rt') as f:
             nodes_df = pd.read_csv(f, sep=',')
         
+        logger.info(f"Nodes data loaded in {time.time() - start_time:.2f} seconds. {len(nodes_df)} nodes found.")
+        
         # Create a dictionary mapping node IDs to their names for quick lookup
         logger.info("Creating node ID to name mapping...")
-        node_id_to_name = dict(zip(nodes_df['Id:ID'], nodes_df['name']))
+        # Pre-allocate dictionary size for better performance
+        node_id_to_name = dict()
+        node_id_to_name = {id: name for id, name in zip(nodes_df['Id:ID'], nodes_df['name'])}
+        
+        # Free up memory
+        del nodes_df
         
         logger.info("Loading edges data...")
+        start_time = time.time()
         # Load edges data
         with gzip.open(edges_path, 'rt') as f:
             edges_df = pd.read_csv(f, sep=',')
+        
+        logger.info(f"Edges data loaded in {time.time() - start_time:.2f} seconds. {len(edges_df)} edges found.")
         
         # Connect to the database
         logger.info(f"Connecting to database at {db_path}...")
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
+        # Optimize SQLite for performance
+        logger.info("Configuring SQLite for optimal performance...")
+        cursor.execute("PRAGMA journal_mode = WAL")
+        cursor.execute("PRAGMA synchronous = NORMAL")
+        cursor.execute("PRAGMA cache_size = -1048576")  # Use 1GB of RAM for cache
+        cursor.execute("PRAGMA temp_store = MEMORY")
+        cursor.execute("PRAGMA mmap_size = 30000000000")  # 30GB memory mapping
+        
         # Create the new table
         logger.info("Creating relations_before_prediction table...")
         cursor.execute(create_table_query)
         
-        # Process and insert the data in batches to avoid memory issues
-        batch_size = 10000
+        # Process and insert the data in larger batches
+        batch_size = 100000  # Increased batch size for 96GB RAM
         total_rows = len(edges_df)
+        total_batches = (total_rows // batch_size) + (1 if total_rows % batch_size > 0 else 0)
+        
+        logger.info(f"Processing {total_rows} edges in {total_batches} batches of {batch_size}...")
+        
+        overall_start_time = time.time()
         
         for i in range(0, total_rows, batch_size):
-            logger.info(f"Processing batch {i//batch_size + 1}/{(total_rows//batch_size) + 1}...")
+            batch_start_time = time.time()
+            current_batch = i // batch_size + 1
+            logger.info(f"Processing batch {current_batch}/{total_batches}...")
             batch = edges_df.iloc[i:i+batch_size]
             
             # Prepare the data for insertion
@@ -93,16 +128,44 @@ def create_relations_before_prediction_table(config_path):
                 ))
             
             # Insert the batch
+            logger.info(f"Inserting batch {current_batch}...")
             cursor.executemany(insert_data_query, data_to_insert)
             conn.commit()
+            
+            batch_time = time.time() - batch_start_time
+            records_per_second = len(batch) / batch_time
+            logger.info(f"Batch {current_batch} processed in {batch_time:.2f} seconds " 
+                       f"({records_per_second:.2f} records/sec)")
+            
+            # Estimate remaining time
+            elapsed_time = time.time() - overall_start_time
+            progress = current_batch / total_batches
+            if progress > 0:
+                estimated_total_time = elapsed_time / progress
+                remaining_time = estimated_total_time - elapsed_time
+                logger.info(f"Progress: {progress:.1%}. Estimated time remaining: {remaining_time/60:.1f} minutes")
+        
+        # Free up memory
+        del edges_df
         
         # Create indexes for better query performance
         logger.info("Creating indexes on the new table...")
         for index_query in config['post_processing'].get('indexes_relations_before_prediction', []):
+            index_start_time = time.time()
+            logger.info(f"Creating index: {index_query[:100]}...")  # Log first 100 chars of query
             cursor.execute(index_query)
             conn.commit()
+            logger.info(f"Index created in {time.time() - index_start_time:.2f} seconds")
         
-        logger.info("Table creation and data insertion completed successfully!")
+        # Get final table stats
+        cursor.execute("SELECT COUNT(*) FROM relations_before_prediction")
+        final_count = cursor.fetchone()[0]
+        total_time = time.time() - overall_start_time
+        
+        logger.info(f"Table creation and data insertion completed successfully!")
+        logger.info(f"Total time: {total_time:.2f} seconds for {final_count} records")
+        logger.info(f"Average processing speed: {final_count/total_time:.2f} records/second")
+        
         conn.close()
         
     except Exception as e:
@@ -113,10 +176,12 @@ def create_relations_after_prediction_table(config_path):
     """
     Creates a new table 'relations_after_prediction' in the existing database
     based on data from 'treat_relations' and 'relations_before_prediction' tables.
-    
+       
     Args:
         config_path (str): Path to the configuration file
     """
+    import time
+    
     try:
         # Load configuration
         config = load_config(config_path)
@@ -133,32 +198,86 @@ def create_relations_after_prediction_table(config_path):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
+        # Optimize SQLite for performance
+        logger.info("Configuring SQLite for optimal performance...")
+        cursor.execute("PRAGMA journal_mode = WAL")
+        cursor.execute("PRAGMA synchronous = NORMAL")
+        cursor.execute("PRAGMA cache_size = -1048576")  # Use 1GB of RAM for cache
+        cursor.execute("PRAGMA temp_store = MEMORY")
+        cursor.execute("PRAGMA mmap_size = 30000000000")  # 30GB memory mapping
+        
         # Create the new table
         logger.info("Creating relations_after_prediction table...")
         cursor.execute(create_table_query)
         conn.commit()
         
+        # Get an estimate of how many rows will be inserted
+        # This helps with progress estimation
+        logger.info("Estimating number of rows to be processed...")
+        try:
+            cursor.execute("SELECT COUNT(*) FROM treat_relations")
+            treat_relations_count = cursor.fetchone()[0]
+            logger.info(f"Found approximately {treat_relations_count} rows in treat_relations")
+        except sqlite3.Error as e:
+            logger.warning(f"Could not get count from treat_relations: {e}")
+            treat_relations_count = "unknown number of"
+        
         # Execute the insert query that pulls and transforms data from treat_relations and relations_before_prediction
-        logger.info("Inserting data into relations_after_prediction table...")
+        logger.info(f"Inserting {treat_relations_count} rows into relations_after_prediction table...")
+        logger.info("This operation could take several minutes. Please wait...")
+        
+        start_time = time.time()
+        
+        conn.execute("PRAGMA busy_timeout = 600000")  # 10 minutes timeout
+        
+        # Execute the insertion
         cursor.execute(insert_data_query)
         conn.commit()
         
-        # Create indexes for better query performance
-        logger.info("Creating indexes on the new table...")
-        for index_query in config['post_processing'].get('indexes_relations_after_prediction', []):
-            cursor.execute(index_query)
-            conn.commit()
+        # Calculate processing time
+        insertion_time = time.time() - start_time
+        logger.info(f"Data insertion completed in {insertion_time:.2f} seconds")
         
         # Log the count of records inserted
         cursor.execute("SELECT COUNT(*) FROM relations_after_prediction")
-        count = cursor.fetchone()[0]
-        logger.info(f"Successfully inserted {count} records into relations_after_prediction table")
+        final_count = cursor.fetchone()[0]
+        logger.info(f"Successfully inserted {final_count} records into relations_after_prediction table")
+        
+        # Create indexes for better query performance
+        logger.info("Creating indexes on the new table...")
+        index_start_time = time.time()
+        
+        for i, index_query in enumerate(config['post_processing'].get('indexes_relations_after_prediction', []), 1):
+            index_query_start = time.time()
+            logger.info(f"Creating index {i}/{len(config['post_processing'].get('indexes_relations_after_prediction', []))}: {index_query[:100]}...")
+            cursor.execute(index_query)
+            conn.commit()
+            logger.info(f"Index created in {time.time() - index_query_start:.2f} seconds")
+        
+        logger.info(f"All indexes created in {time.time() - index_start_time:.2f} seconds")
+        
+        conn.commit()
+        
+        # Reset pragmas to normal for database safety
+        cursor.execute("PRAGMA journal_mode = DELETE")
+        cursor.execute("PRAGMA synchronous = FULL")
+        conn.commit()
         
         conn.close()
-        logger.info("Table creation and data insertion completed successfully!")
+        logger.info(f"Table creation and data insertion completed successfully in {time.time() - start_time:.2f} seconds!")
         
     except Exception as e:
         logger.error(f"Error creating relations_after_prediction table: {str(e)}")
+        # If there's an error, try to provide more context about what happened
+        if 'cursor' in locals() and 'conn' in locals():
+            try:
+                cursor.execute("PRAGMA journal_mode = DELETE")
+                cursor.execute("PRAGMA synchronous = FULL")
+                conn.close()
+                logger.info("Database connection closed properly despite error")
+            except Exception as close_error:
+                logger.error(f"Additional error while closing database: {str(close_error)}")
+        
         raise
 
 def parse_args():

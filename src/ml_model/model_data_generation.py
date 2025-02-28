@@ -57,10 +57,10 @@ def generate_data():
             entity1_label = node_map.get(start_id, "Unknown")
             entity2_label = node_map.get(end_id, "Unknown")
             
-            # Create string representations without any prefix
+            # Create string representations
             entity1_str = f"{entity1_label}::{start_id}"
             entity2_str = f"{entity2_label}::{end_id}"
-            # Build relation string without the "ALPHAMELD::" prefix
+            # Build relation string 
             relation_str = f"{relation}:{entity1_label}:{entity2_label}"
             
             csv_writer.writerow([entity1_str, relation_str, entity2_str, score])

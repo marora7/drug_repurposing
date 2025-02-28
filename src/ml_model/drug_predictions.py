@@ -4,7 +4,8 @@ import argparse
 import subprocess
 import multiprocessing
 import logging
-from datetime import datetime
+import psutil
+from datetime import datetime, timedelta
 from tqdm import tqdm
 import time
 
@@ -31,24 +32,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('drug_predictions.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
-
 class DrugPredictionController:
     def __init__(self, 
                  entities_file, 
                  model_script='model_test.py', 
-                 batch_size=100, 
-                 num_workers=4, 
-                 config_path=None):
+                 batch_size=250, 
+                 num_workers=14, 
+                 config_path=None,
+                 memory_limit_gb=None):
         """
         Initialize the controller for drug predictions across multiple disease entities.
         
@@ -58,6 +49,7 @@ class DrugPredictionController:
             batch_size (int): Number of diseases to process in each batch
             num_workers (int): Number of parallel processes to run
             config_path (str, optional): Path to the configuration file. If None, will use default location.
+            memory_limit_gb (float, optional): Memory limit in GB to prevent OOM errors. If None, will use 90% of available RAM.
         """
         self.entities_file = entities_file
 
@@ -80,8 +72,18 @@ class DrugPredictionController:
         if not os.path.exists(self.model_script):
             logger.warning(f"Model script not found at {self.model_script}. This will cause errors when processing diseases.")
 
+        # Set optimal batch size and workers for 16 CPU system
         self.batch_size = batch_size
-        self.num_workers = min(num_workers, multiprocessing.cpu_count())
+        
+        # Use 14 workers to leave 2 cores for system processes
+        self.num_workers = min(num_workers, multiprocessing.cpu_count() - 2)
+        
+        # Set memory limit (default to 90% of available memory if not specified)
+        if memory_limit_gb is None:
+            total_memory_gb = psutil.virtual_memory().total / (1024 ** 3)
+            self.memory_limit_gb = total_memory_gb * 0.9
+        else:
+            self.memory_limit_gb = memory_limit_gb
         
         # Determine config path if not provided
         if config_path is None:
@@ -101,7 +103,13 @@ class DrugPredictionController:
         # Initialize database for tracking progress
         init_database(self.progress_db_path, self.config)
         
+        # Progress tracking attributes
+        self.start_time = None
+        self.processed_count = 0
+        self.avg_time_per_disease = None
+        
         logger.info(f"Initialized controller with {self.num_workers} workers and batch size {self.batch_size}")
+        logger.info(f"Memory limit set to {self.memory_limit_gb:.2f} GB")
         logger.info(f"Using progress tracking database: {self.progress_db_path}")
 
     def load_disease_entities(self):
@@ -134,6 +142,13 @@ class DrugPredictionController:
             bool: True if successful, False otherwise
         """
         try:
+            # Check memory usage before processing
+            current_memory_usage_gb = psutil.virtual_memory().used / (1024 ** 3)
+            if current_memory_usage_gb > self.memory_limit_gb:
+                logger.warning(f"Memory usage ({current_memory_usage_gb:.2f} GB) exceeds limit ({self.memory_limit_gb:.2f} GB). Postponing disease {disease_id}.")
+                time.sleep(10)  # Wait a bit for memory to be freed
+                return False
+            
             # Command to execute the model script for this disease
             # Based on your model_test.py, we pass the disease name directly as a positional argument
             # No '--output' parameter since your script saves directly to the database
@@ -184,6 +199,9 @@ class DrugPredictionController:
                 successful += 1
             else:
                 failed += 1
+                
+            # Add a small delay between disease processing to prevent resource contention
+            time.sleep(0.5)
         
         status = 'completed' if failed == 0 else 'partial' if successful > 0 else 'failed'
         record_batch(self.progress_db_path, batch_id, len(disease_batch), status, datetime.now().isoformat(), self.config)
@@ -216,10 +234,86 @@ class DrugPredictionController:
         logger.info(f"Worker {worker_id} finished")
         results_queue.put(None)  # Signal that this worker is done
 
+    def calculate_eta(self, remaining, processed_so_far):
+        """
+        Calculate estimated time to completion.
+        
+        Args:
+            remaining (int): Number of remaining items
+            processed_so_far (int): Number of items processed
+            
+        Returns:
+            str: Formatted ETA string
+        """
+        if processed_so_far == 0 or self.start_time is None:
+            return "Calculating..."
+            
+        elapsed = time.time() - self.start_time
+        avg_time_per_item = elapsed / processed_so_far
+        
+        # Store average time for future calculations
+        self.avg_time_per_disease = avg_time_per_item
+        
+        # Estimate remaining time
+        remaining_seconds = remaining * avg_time_per_item
+        
+        # Convert to hours, minutes, seconds
+        eta = timedelta(seconds=int(remaining_seconds))
+        
+        if eta.days > 0:
+            return f"{eta.days}d {eta.seconds//3600}h {(eta.seconds//60)%60}m"
+        elif eta.seconds // 3600 > 0:
+            return f"{eta.seconds//3600}h {(eta.seconds//60)%60}m {eta.seconds%60}s"
+        else:
+            return f"{(eta.seconds//60)%60}m {eta.seconds%60}s"
+
+    def update_progress_bar(self, pbar, successful, failed, total_remaining):
+        """
+        Update the progress bar with additional information.
+        
+        Args:
+            pbar (tqdm): Progress bar object
+            successful (int): Number of successfully processed items
+            failed (int): Number of failed items
+            total_remaining (int): Total remaining items
+        """
+        self.processed_count += (successful + failed)
+        
+        # Calculate ETA
+        eta = self.calculate_eta(total_remaining, self.processed_count)
+        
+        # Calculate success rate
+        success_rate = (successful / (successful + failed) * 100) if (successful + failed) > 0 else 0
+        
+        # Get current memory usage
+        memory_usage = psutil.virtual_memory()
+        memory_percent = memory_usage.percent
+        memory_used_gb = memory_usage.used / (1024**3)
+        
+        # Calculate processing rate (items per minute)
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        items_per_minute = (self.processed_count / elapsed * 60) if elapsed > 0 else 0
+        
+        # Update progress bar description with all information
+        pbar.set_description(
+            f"Processing: {self.processed_count}/{self.processed_count + total_remaining} | "
+            f"Remaining: {total_remaining} | "
+            f"ETA: {eta} | "
+            f"Success: {success_rate:.1f}% | "
+            f"Rate: {items_per_minute:.1f}/min | "
+            f"Mem: {memory_percent:.1f}% ({memory_used_gb:.1f}GB)"
+        )
+        
+        # Update the progress count
+        pbar.update(successful + failed)
+
     def run(self):
         """
         Main method to run the prediction process for all diseases.
         """
+        # Log system resource information
+        logger.info(f"System resources: {multiprocessing.cpu_count()} CPUs, {psutil.virtual_memory().total / (1024**3):.2f} GB RAM")
+        
         # Load all disease entities
         all_diseases = self.load_disease_entities()
         
@@ -234,56 +328,99 @@ class DrugPredictionController:
             logger.info("All diseases have already been processed. Nothing to do.")
             return
         
-        # Create batches
+        # Create batches with optimal size for 16 CPUs and 46GB RAM
         batches = []
         for i in range(0, len(remaining_diseases), self.batch_size):
             batch = remaining_diseases[i:i + self.batch_size]
             batches.append((i // self.batch_size, batch))
         logger.info(f"Created {len(batches)} batches of size up to {self.batch_size}")
         
-        # Set up multiprocessing
-        job_queue = multiprocessing.JoinableQueue()
-        results_queue = multiprocessing.Queue()
+        # Initialize start time for ETA calculation
+        self.start_time = time.time()
+        self.processed_count = 0
         
-        # Start worker processes
-        workers = []
-        for i in range(self.num_workers):
-            p = multiprocessing.Process(
-                target=self.worker_function,
-                args=(i, job_queue, results_queue)
-            )
-            p.start()
-            workers.append(p)
-        
-        # Add jobs to the queue
-        for batch in batches:
-            job_queue.put(batch)
+        # Set up multiprocessing with optimized settings
+        # Use manager for better memory handling
+        with multiprocessing.Manager() as manager:
+            job_queue = manager.JoinableQueue()
+            results_queue = manager.Queue()
             
-        # Add poison pills to stop workers
-        for _ in range(self.num_workers):
-            job_queue.put(None)
+            # Start worker processes
+            workers = []
+            for i in range(self.num_workers):
+                p = multiprocessing.Process(
+                    target=self.worker_function,
+                    args=(i, job_queue, results_queue)
+                )
+                p.daemon = True  # Enable daemon mode for better cleanup
+                p.start()
+                workers.append(p)
+            
+            # Add jobs to the queue
+            for batch in batches:
+                job_queue.put(batch)
+                
+            # Add poison pills to stop workers
+            for _ in range(self.num_workers):
+                job_queue.put(None)
+            
+            # Process results as they come in
+            total_successful = 0
+            total_failed = 0
+            completed_workers = 0
+            total_remaining = len(remaining_diseases)
+            
+            # Create progress bar with initial status
+            with tqdm(total=len(remaining_diseases), desc="Initializing...") as pbar:
+                while completed_workers < self.num_workers:
+                    try:
+                        result = results_queue.get(timeout=300)  # 5-minute timeout
+                        if result is None:
+                            completed_workers += 1
+                            continue
+                                
+                        batch_id, successful, failed = result
+                        total_successful += successful
+                        total_failed += failed
+                        total_remaining -= (successful + failed)
+                        
+                        # Update progress bar with additional information
+                        self.update_progress_bar(pbar, successful, failed, total_remaining)
+                        
+                        # Log batch completion
+                        current_memory = psutil.virtual_memory()
+                        logger.info(f"Batch {batch_id} completed: {successful} successful, {failed} failed. "
+                                   f"Memory usage: {current_memory.percent}% ({current_memory.used / (1024**3):.2f} GB)")
+                                   
+                        # Calculate and log estimated completion time
+                        if self.avg_time_per_disease:
+                            eta = self.calculate_eta(total_remaining, self.processed_count)
+                            logger.info(f"Estimated time to completion: {eta} "
+                                       f"(processing rate: {60/self.avg_time_per_disease:.2f} diseases/minute)")
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing results: {str(e)}")
+                        
+                    # Monitor system resources and adjust if necessary
+                    if psutil.virtual_memory().percent > 90:
+                        logger.warning("Memory usage is high. Waiting for 30 seconds to allow cleanup.")
+                        time.sleep(30)
+            
+            # Wait for all workers to finish
+            for p in workers:
+                p.join(timeout=60)  # Wait up to 60 seconds for workers to finish
+                if p.is_alive():
+                    logger.warning(f"Worker process {p.pid} didn't terminate gracefully, terminating forcefully")
+                    p.terminate()
         
-        # Process results as they come in
-        total_successful = 0
-        total_failed = 0
-        completed_workers = 0
+        # Calculate total execution time
+        elapsed_time = time.time() - self.start_time
+        hours, remainder = divmod(elapsed_time, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        formatted_time = f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
         
-        with tqdm(total=len(remaining_diseases), desc="Processing diseases") as pbar:
-            while completed_workers < self.num_workers:
-                result = results_queue.get()
-                if result is None:
-                    completed_workers += 1
-                    continue
-                    
-                batch_id, successful, failed = result
-                total_successful += successful
-                total_failed += failed
-                pbar.update(successful + failed)
-                logger.info(f"Batch {batch_id} completed: {successful} successful, {failed} failed")
-        
-        # Wait for all workers to finish
-        for p in workers:
-            p.join()
+        # Calculate processing rate
+        processing_rate = len(remaining_diseases) / elapsed_time * 60 if elapsed_time > 0 else 0
         
         # Final report
         logger.info("=" * 50)
@@ -291,6 +428,8 @@ class DrugPredictionController:
         logger.info(f"Total diseases processed: {total_successful + total_failed}")
         logger.info(f"Successfully processed: {total_successful}")
         logger.info(f"Failed to process: {total_failed}")
+        logger.info(f"Total execution time: {formatted_time} ({elapsed_time:.2f} seconds)")
+        logger.info(f"Processing rate: {processing_rate:.2f} diseases/minute")
         logger.info("=" * 50)
 
 def parse_arguments():
@@ -303,14 +442,17 @@ def parse_arguments():
     parser.add_argument('--model-script', type=str, default='model_test.py',
                         help='Path to the model testing script to be called (default: src/ml_model/model_test.py)')
     
-    parser.add_argument('--batch-size', type=int, default=100,
-                        help='Number of diseases to process in each batch (default: 100)')
+    parser.add_argument('--batch-size', type=int, default=250,
+                        help='Number of diseases to process in each batch (default: 250)')
     
-    parser.add_argument('--num-workers', type=int, default=4,
-                        help='Number of parallel processes to run (default: 4)')
+    parser.add_argument('--num-workers', type=int, default=14,
+                        help='Number of parallel processes to run (default: 14)')
     
     parser.add_argument('--config-path', type=str, default='src/config/config.yaml',
                         help='Path to the configuration file (default: src/config/config.yaml)')
+    
+    parser.add_argument('--memory-limit-gb', type=float, default=40,
+                        help='Memory limit in GB to prevent OOM errors (default: 40)')
     
     return parser.parse_args()
 
@@ -342,13 +484,18 @@ def main():
         model_script=args.model_script,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        config_path=args.config_path
+        config_path=args.config_path,
+        memory_limit_gb=args.memory_limit_gb
     )
     
     controller.run()
     
     elapsed_time = time.time() - start_time
-    logger.info(f"Total execution time: {elapsed_time:.2f} seconds ({elapsed_time/3600:.2f} hours)")
+    hours, remainder = divmod(elapsed_time, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    formatted_time = f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
+    
+    logger.info(f"Total execution time: {formatted_time} ({elapsed_time:.2f} seconds)")
 
 
 if __name__ == "__main__":

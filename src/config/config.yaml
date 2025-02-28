@@ -319,3 +319,78 @@ processing:
 output:
   log_level: INFO
   detailed_logging: true
+
+#Data generation for post processing
+# Add this section to your existing config.yaml file
+
+post_processing:
+  create_relations_before_prediction: |
+    CREATE TABLE IF NOT EXISTS relations_before_prediction (
+      start_id TEXT,
+      start_id_type TEXT,
+      start_id_name TEXT,
+      end_id TEXT,
+      end_id_type TEXT,
+      end_id_name TEXT,
+      relation TEXT,
+      pmcount INTEGER,
+      PRIMARY KEY (start_id, end_id, relation)
+    )
+  
+  insert_relations_before_prediction: |
+    INSERT OR IGNORE INTO relations_before_prediction (
+      start_id, start_id_type, start_id_name, 
+      end_id, end_id_type, end_id_name, 
+      relation, pmcount
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  
+  # Optional but recommended indexes for better query performance
+  indexes_relations_before_prediction:
+    - CREATE INDEX IF NOT EXISTS idx_rel_start_id ON relations_before_prediction(start_id)
+    - CREATE INDEX IF NOT EXISTS idx_rel_end_id ON relations_before_prediction(end_id)
+    - CREATE INDEX IF NOT EXISTS idx_rel_relation ON relations_before_prediction(relation)
+    - CREATE INDEX IF NOT EXISTS idx_rel_start_type ON relations_before_prediction(start_id_type)
+    - CREATE INDEX IF NOT EXISTS idx_rel_end_type ON relations_before_prediction(end_id_type)
+    
+  # Relations after prediction table
+  create_relations_after_prediction: |
+    CREATE TABLE IF NOT EXISTS relations_after_prediction (
+      disease_id TEXT,
+      disease_name TEXT,
+      drug_id TEXT,
+      drug_name TEXT,
+      relation TEXT,
+      distance REAL,
+      status TEXT,
+      PRIMARY KEY (disease_id, drug_id, relation)
+    )
+    
+  insert_relations_after_prediction: |
+    INSERT OR IGNORE INTO relations_after_prediction (
+      disease_id, disease_name, drug_id, drug_name, relation, distance, status
+    )
+    SELECT 
+      SUBSTR(tr.disease, 10) AS disease_id,
+      (SELECT rbp.start_id_name 
+       FROM relations_before_prediction rbp 
+       WHERE rbp.start_id = SUBSTR(tr.disease, 10) 
+       LIMIT 1) AS disease_name,
+      SUBSTR(tr.drug, 11) AS drug_id,
+      (SELECT rbp.end_id_name 
+       FROM relations_before_prediction rbp 
+       WHERE rbp.end_id = SUBSTR(tr.drug, 11) 
+       LIMIT 1) AS drug_name,
+      CASE
+        WHEN INSTR(tr.relation, ':') > 0 THEN SUBSTR(tr.relation, 1, INSTR(tr.relation, ':') - 1)
+        ELSE tr.relation
+      END AS relation,
+      tr.distance,
+      tr.status
+    FROM treat_relations tr
+    
+  # Optional but recommended indexes for better query performance
+  indexes_relations_after_prediction:
+    - CREATE INDEX IF NOT EXISTS idx_rel_after_disease_id ON relations_after_prediction(disease_id)
+    - CREATE INDEX IF NOT EXISTS idx_rel_after_drug_id ON relations_after_prediction(drug_id)
+    - CREATE INDEX IF NOT EXISTS idx_rel_after_relation ON relations_after_prediction(relation)
+    - CREATE INDEX IF NOT EXISTS idx_rel_after_status ON relations_after_prediction(status)

@@ -321,7 +321,6 @@ output:
   detailed_logging: true
 
 #Data generation for post processing
-
 post_processing:
   create_relations_before_prediction: |
     CREATE TABLE IF NOT EXISTS relations_before_prediction (

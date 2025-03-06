@@ -321,7 +321,6 @@ output:
   detailed_logging: true
 
 #Data generation for post processing
-# Add this section to your existing config.yaml file
 
 post_processing:
   create_relations_before_prediction: |
@@ -394,3 +393,149 @@ post_processing:
     - CREATE INDEX IF NOT EXISTS idx_rel_after_drug_id ON relations_after_prediction(drug_id)
     - CREATE INDEX IF NOT EXISTS idx_rel_after_relation ON relations_after_prediction(relation)
     - CREATE INDEX IF NOT EXISTS idx_rel_after_status ON relations_after_prediction(status)
+  
+# LLM configuration
+llm_configuration:
+  api_url: "http://localhost:11434/api/generate"
+  model_name: "llama3.2"
+
+# Drug classification settings
+drug_classification:
+  input_table: relations_after_prediction
+
+# Disease classification settings
+disease_classification:
+  input_table: relations_after_prediction
+
+# Drug classification prompt
+drugs_prompt: |
+  You are a pharmaceutical classification expert. Classify the following drug/compound into ONE of these categories:
+  
+  1. FDA-Approved Drugs - Medications already approved for human use
+  2. Non-Approved Compounds - Drugs in research or clinical trial phases
+  3. Vitamins/Nutrients/Supplements - Essential compounds and supplements
+  4. Research Tools/Reagents - Compounds primarily used in laboratory settings
+  5. Unclassified/Other - Compounds that don't fit clearly into other categories
+  
+  Drug ID: {drug_id}
+  Drug name: {drug_name}
+  
+  Respond in valid JSON format with the following structure:
+  {{
+      "drug_id": "{drug_id}",
+      "category": [number between 1-5],
+      "category_name": "[full name of the category]",
+      "reasoning": "[brief explanation for your classification]",
+      "confidence": [number between 0-1 indicating your confidence]
+  }}
+  
+  IMPORTANT: Make sure to enclose all text in double quotes. The entire JSON must be valid.
+
+# Disease classification prompt
+diseases_prompt: |
+  You are a medical classification expert. Classify the following disease/medical condition:
+
+  Disease ID: {disease_id}
+  Disease/condition name: {disease_name}
+
+  FIRST CLASSIFICATION - Disease Type:
+  1. Primary Treatable Diseases - Medical conditions (including congenital ones) that are direct targets for drug therapy (e.g., autoimmune diabetes, neonatal diabetes)
+  2. Symptoms/Complications - Clinical manifestations or secondary effects of diseases (e.g., loss of awareness, diabetic coma)
+  3. Structural Conditions - Physical or anatomical abnormalities primarily addressed through surgical intervention rather than medication (e.g., cleft palate, certain heart defects)
+  4. Interventions/Procedures - Medical interventions or procedures (e.g., amputation, transplantation)
+  5. Other Medical Entities - Medical entities that don't fit clearly into the above categories
+
+  IMPORTANT: After determining the above classification, ONLY IF the disease is classified as "Primary Treatable Disease" (type 1), then proceed to classify it into one of the therapeutic areas below:
+
+  SECOND CLASSIFICATION (ONLY for Primary Treatable Diseases) - Therapeutic Area:
+  1. Oncology - All types of cancers and related conditions
+  2. Cardiovascular - Heart diseases, stroke, hypertension, arrhythmias
+  3. Neurology/CNS - Neurological disorders, Alzheimer's, Parkinson's, epilepsy, multiple sclerosis
+  4. Infectious Diseases - Bacterial, viral, fungal infections, including HIV, tuberculosis, hepatitis
+  5. Metabolic/Endocrine - Diabetes, thyroid disorders, metabolic syndrome, obesity
+  6. Immunology/Inflammation - Autoimmune diseases, allergies, rheumatoid arthritis, psoriasis
+  7. Respiratory - Asthma, COPD, pulmonary fibrosis, pneumonia
+  8. Gastroenterology - IBD, IBS, GERD, liver diseases, pancreatic disorders
+  9. Dermatology - Skin conditions, eczema, acne, dermatitis
+  10. Nephrology/Urology - Kidney diseases, UTIs, renal failure, bladder disorders
+  11. Hematology - Blood disorders, anemia, leukemia, clotting disorders
+  12. Musculoskeletal - Bone and joint diseases, osteoporosis, arthritis
+  13. Ophthalmology - Eye diseases, glaucoma, macular degeneration
+  14. Psychiatry/Mental Health - Depression, anxiety, schizophrenia, bipolar disorder
+  15. Rare Diseases - Orphan diseases, genetic disorders
+  16. Unclassified/Other - Diseases that don't fit clearly into other categories or lack sufficient information for classification
+  
+  Respond in valid JSON format with the following structure:
+  
+  If the disease is a Primary Treatable Disease (type 1):
+  {{
+      "disease_type": 1,
+      "disease_type_name": "Primary Treatable Diseases",
+      "therapeutic_area": 5,
+      "therapeutic_area_name": "Metabolic/Endocrine",
+      "reasoning": "Brief explanation for your classification",
+      "confidence": 0.9
+  }}
+  
+  If the disease is NOT a Primary Treatable Disease:
+  {{
+      "disease_type": 2,  // or 3, 4, 5 as appropriate
+      "disease_type_name": "Symptoms/Complications",  // or the appropriate name
+      "therapeutic_area": 16,
+      "therapeutic_area_name": "Unclassified/Other",
+      "reasoning": "Brief explanation for your classification",
+      "confidence": 0.9
+  }}
+  
+  IMPORTANT:
+  1. DO NOT return lists/arrays for any values - use single values only
+  2. For disease_type, use a single integer (1-5)
+  3. For therapeutic_area, ALWAYS use a single integer: specific value (1-15) for Primary Treatable Diseases, or 16 for non-Primary Treatable Diseases
+  4. For therapeutic_area_name, ALWAYS include a value: specific area for Primary Treatable Diseases, or "Unclassified/Other" for non-Primary Treatable Diseases
+  5. Make sure the entire JSON is valid
+  6. Do not include extra quotes within values
+  7. DO NOT use null values for any field
+
+# Classification queries
+classification_queries:
+  # Query to get drugs from database
+  get_drugs_query: "SELECT drug_id, drug_name FROM {table} GROUP BY drug_id"
+  
+  # Query to get diseases from database
+  get_diseases_query: "SELECT disease_id, disease_name FROM {table} GROUP BY disease_id"
+  
+  # Query to create drugs_grouping table
+  create_drugs_grouping_table: |
+    CREATE TABLE IF NOT EXISTS drugs_grouping (
+      drug_id TEXT PRIMARY KEY,
+      drug_name TEXT,
+      category INTEGER,
+      category_name TEXT,
+      confidence REAL,
+      reasoning TEXT
+    )
+  
+  # Query to create diseases_grouping table
+  create_diseases_grouping_table: |
+    CREATE TABLE IF NOT EXISTS diseases_grouping (
+      disease_id TEXT PRIMARY KEY,
+      disease_name TEXT,
+      disease_type INTEGER,
+      disease_type_name TEXT,
+      therapeutic_area INTEGER,
+      therapeutic_area_name TEXT,
+      confidence REAL,
+      reasoning TEXT
+    )
+
+  # Query to insert drug classification
+  insert_drug_classification: |
+    INSERT OR REPLACE INTO drugs_grouping 
+    (drug_id, drug_name, category, category_name, confidence, reasoning) 
+    VALUES (?, ?, ?, ?, ?, ?)
+
+  # Query to insert disease classification
+  insert_disease_classification: |
+    INSERT OR REPLACE INTO diseases_grouping 
+    (disease_id, disease_name, disease_type, disease_type_name, therapeutic_area, therapeutic_area_name, confidence, reasoning) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)

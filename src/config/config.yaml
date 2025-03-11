@@ -526,6 +526,18 @@ classification_queries:
       confidence REAL,
       reasoning TEXT
     )
+  
+  create_diseases_grouped_table: |
+    CREATE TABLE IF NOT EXISTS diseases_grouping (
+      disease_id TEXT PRIMARY KEY,
+      disease_name TEXT,
+      disease_type INTEGER,
+      disease_type_name TEXT,
+      therapeutic_area INTEGER,
+      therapeutic_area_name TEXT,
+      confidence REAL,
+      reasoning TEXT
+    )
 
   # Query to insert drug classification
   insert_drug_classification: |
@@ -535,6 +547,11 @@ classification_queries:
 
   # Query to insert disease classification
   insert_disease_classification: |
+    INSERT OR REPLACE INTO diseases_grouping 
+    (disease_id, disease_name, disease_type, disease_type_name, therapeutic_area, therapeutic_area_name, confidence, reasoning) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+
+  insert_disease_grouped: |
     INSERT OR REPLACE INTO diseases_grouping 
     (disease_id, disease_name, disease_type, disease_type_name, therapeutic_area, therapeutic_area_name, confidence, reasoning) 
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)

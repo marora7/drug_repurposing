@@ -498,7 +498,14 @@ diseases_prompt: |
 # Classification queries
 classification_queries:
   # Query to get drugs from database
-  get_drugs_query: "SELECT drug_id, drug_name FROM {table} GROUP BY drug_id"
+  get_drugs_query: |
+    SELECT r.drug_id, r.drug_name 
+    FROM {table} r
+    INNER JOIN diseases_grouped dg ON r.disease_id = dg.disease_id
+    LEFT JOIN drugs_grouped drg ON r.drug_id = drg.drug_id
+    WHERE dg.disease_type = 1
+    AND drg.drug_id is null
+    GROUP BY r.drug_id
   
   # Query to get diseases from database
   get_diseases_query: "SELECT disease_id, disease_name FROM {table} GROUP BY disease_id"

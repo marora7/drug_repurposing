@@ -1,7 +1,7 @@
 """
 Main entry point for the Drug Repurposing Project pipeline.
 
-This script allows you to run the entire pipeline or to execute a specific phase.
+This script allows you to run the entire pipeline or to execute a specific phase for data extraction, preprocessing and transformation phase.
 
 Usage examples:
   - Run the entire pipeline:
@@ -12,8 +12,6 @@ Usage examples:
       python main.py --pipeline preprocessing
   - Run only the transformation phase:
       python main.py --pipeline transformation
-  - Run only the knowledge graph phase:
-      python main.py --pipeline knowledge_graph
 """
 
 import argparse
@@ -23,7 +21,6 @@ import os
 from src.data_extraction import extract_pubtator, extract_ncbi
 from src.data_preprocessing import preprocess_nodes, preprocess_edges, filter_human_genes
 from src.data_transformation import transform_nodes, transform_edges
-from src.knowledge_graph import import_graph
 from src.utils.config_utils import load_config
 
 PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
@@ -62,13 +59,6 @@ def run_transformation():
     transform_edges([])
     print("=== Data Transformation Completed ===\n")
 
-def run_knowledge_graph():
-    """Run the knowledge graph import process."""
-    print("=== Starting Knowledge Graph Import ===")
-    print("Executing offline import process into Neo4j")
-    import_graph()  # Calls main() from knowledge_graph.py
-    print("=== Knowledge Graph Import Completed ===\n")
-
 def main():
     # Set up command-line argument parsing.
     parser = argparse.ArgumentParser(
@@ -76,9 +66,9 @@ def main():
     )
     parser.add_argument(
         '--pipeline',
-        choices=['all', 'extraction', 'preprocessing', 'transformation', 'knowledge_graph'],
+        choices=['all', 'extraction', 'preprocessing', 'transformation'],
         default='all',
-        help="Choose which pipeline phase to run: 'all' (default), 'extraction', 'preprocessing', 'transformation', or 'knowledge_graph'."
+        help="Choose which pipeline phase to run: 'all' (default), 'extraction', 'preprocessing', 'transformation'."
     )
 
     args = parser.parse_args()
@@ -88,15 +78,12 @@ def main():
         run_extraction()
         run_preprocessing()
         run_transformation()
-        run_knowledge_graph()
     elif args.pipeline == 'extraction':
         run_extraction()
     elif args.pipeline == 'preprocessing':
         run_preprocessing()
     elif args.pipeline == 'transformation':
         run_transformation()
-    elif args.pipeline == 'knowledge_graph':
-        run_knowledge_graph()
 
 if __name__ == '__main__':
     main()
